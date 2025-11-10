@@ -1,0 +1,19 @@
+{
+  "name": "tempzokuweb",
+  "version": "1.0.0",
+  "description": "Raid loot distribution helper",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"No automated tests specified\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mysql2": "^3.9.1"
+  },
+  "type": "commonjs"
+}
