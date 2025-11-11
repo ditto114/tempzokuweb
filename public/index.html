@@ -8,108 +8,167 @@
 </head>
 <body>
   <div class="container">
+    <nav class="top-nav">
+      <button id="nav-list" class="secondary">목록으로</button>
+      <div class="nav-actions">
+        <button id="nav-view" class="secondary">보기</button>
+        <button id="nav-edit" class="secondary">수정</button>
+        <button id="nav-create" class="primary">표 제작</button>
+      </div>
+    </nav>
+
     <header>
-      <h1>공대 분배 도우미</h1>
+      <h1 id="page-title">공대 분배 도우미</h1>
       <p>드랍템과 손님 수익을 계산하고 공대원에게 자동으로 분배해보세요.</p>
     </header>
 
-    <section class="card">
-      <h2>드랍템 수익</h2>
-      <table id="drop-table">
-        <thead>
-          <tr>
-            <th>품목</th>
-            <th>판매가격</th>
-            <th>판매방식</th>
-            <th>실수령액</th>
-          </tr>
-        </thead>
-        <tbody>
-        </tbody>
-      </table>
-      <button id="add-drop-row" class="secondary">행 추가</button>
-    </section>
-
-    <section class="card">
-      <h2>손님 수익</h2>
-      <table id="guest-table">
-        <thead>
-          <tr>
-            <th>품목</th>
-            <th>판매가격</th>
-            <th>판매방식</th>
-            <th>실수령액</th>
-          </tr>
-        </thead>
-        <tbody>
-        </tbody>
-      </table>
-      <button id="add-guest-row" class="secondary">행 추가</button>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>분배표</h2>
-        <div class="card-actions">
-          <button id="add-member-btn" class="primary">공대원 추가</button>
-          <button id="manage-members-btn" class="secondary">공대원 관리</button>
-        </div>
-      </div>
-
-      <div id="member-form" class="member-form hidden">
-        <div class="form-row">
-          <label for="nickname-input">닉네임</label>
-          <input id="nickname-input" type="text" placeholder="닉네임" />
-        </div>
-        <div class="form-row">
-          <label for="job-input">직업</label>
-          <input id="job-input" type="text" placeholder="직업" />
-        </div>
-        <div class="form-actions">
-          <button id="save-member" class="primary">저장</button>
-          <button id="cancel-member" class="secondary">취소</button>
-        </div>
-      </div>
-
-      <div class="totals">
-        <div>실수령액 합계: <span id="total-net">0</span></div>
-        <div>공대원 수: <span id="member-count">0</span></div>
-      </div>
-
-      <div id="member-management" class="member-management hidden">
-        <div class="member-management-header">
-          <h3>공대원 관리</h3>
-          <button id="close-management" class="secondary">닫기</button>
+    <main>
+      <section id="list-page" class="card">
+        <div class="card-header">
+          <h2>분배표 목록</h2>
+          <div class="card-actions">
+            <button id="refresh-distributions" class="secondary">새로고침</button>
+            <button id="list-create" class="primary">표 제작</button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
-              <th>닉네임</th>
-              <th>직업</th>
-              <th>삭제</th>
+              <th>제목</th>
+              <th>생성일</th>
+              <th>수정일</th>
+              <th>동작</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="distribution-list-body">
+            <tr>
+              <td colspan="4" class="empty">저장된 분배표가 없습니다.</td>
+            </tr>
           </tbody>
         </table>
-      </div>
+      </section>
 
-      <table id="distribution-table">
-        <thead>
-          <tr>
-            <th>닉네임</th>
-            <th>직업</th>
-            <th>분배금</th>
-            <th>분배율</th>
-            <th>차감금(만)</th>
-            <th>인센티브(만)</th>
-            <th>최종 분배금</th>
-          </tr>
-        </thead>
-        <tbody>
-        </tbody>
-      </table>
-    </section>
+      <div id="editor-page" class="hidden">
+        <div class="dual-layout">
+          <section class="card">
+            <h2>드랍템 수익</h2>
+            <table id="drop-table">
+              <thead>
+                <tr>
+                  <th>품목</th>
+                  <th>판매가격</th>
+                  <th>판매방식</th>
+                  <th>실수령액</th>
+                </tr>
+              </thead>
+              <tbody>
+              </tbody>
+            </table>
+            <button id="add-drop-row" class="secondary" data-lockable="true">행 추가</button>
+          </section>
+
+          <section class="card">
+            <h2>손님 수익</h2>
+            <table id="guest-table">
+              <thead>
+                <tr>
+                  <th>품목</th>
+                  <th>판매가격</th>
+                  <th>판매방식</th>
+                  <th>실수령액</th>
+                </tr>
+              </thead>
+              <tbody>
+              </tbody>
+            </table>
+            <button id="add-guest-row" class="secondary" data-lockable="true">행 추가</button>
+          </section>
+        </div>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>분배표</h2>
+            <div class="card-actions">
+              <button id="add-member-btn" class="primary" data-lockable="true">공대원 추가</button>
+              <button id="manage-members-btn" class="secondary" data-lockable="true">공대원 관리</button>
+            </div>
+          </div>
+
+          <div id="member-form" class="member-form hidden">
+            <div class="form-row">
+              <label for="nickname-input">닉네임</label>
+              <input id="nickname-input" type="text" placeholder="닉네임" />
+            </div>
+            <div class="form-row">
+              <label for="job-input">직업</label>
+              <input id="job-input" type="text" placeholder="직업" />
+            </div>
+            <div class="form-actions">
+              <button id="save-member" class="primary">저장</button>
+              <button id="cancel-member" class="secondary">취소</button>
+            </div>
+          </div>
+
+          <div class="totals">
+            <div class="totals-row">공대원 수: <span id="member-count">0</span></div>
+            <div class="totals-row">총 수익: <span id="total-net">0</span></div>
+            <div class="totals-row">총 인센티브: <span id="total-incentive">0</span></div>
+            <div class="totals-row">총 분배금: <span id="total-distribution">0</span></div>
+          </div>
+
+          <div id="member-management" class="member-management hidden">
+            <div class="member-management-header">
+              <h3>공대원 관리</h3>
+              <button id="close-management" class="secondary">닫기</button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>닉네임</th>
+                  <th>직업</th>
+                  <th>삭제</th>
+                </tr>
+              </thead>
+              <tbody>
+              </tbody>
+            </table>
+          </div>
+
+          <table id="distribution-table">
+            <thead>
+              <tr>
+                <th>닉네임</th>
+                <th>직업</th>
+                <th>분배금</th>
+                <th>분배율</th>
+                <th>차감금(만)</th>
+                <th>인센티브(만)</th>
+                <th>최종 분배금</th>
+              </tr>
+            </thead>
+            <tbody>
+            </tbody>
+          </table>
+        </section>
+
+        <div class="save-actions">
+          <button id="open-save-modal" class="primary" data-lockable="true">저장</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="modal-backdrop" class="modal-backdrop hidden"></div>
+  <div id="save-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="save-modal-title">
+    <div class="modal-content">
+      <h3 id="save-modal-title">분배표 저장</h3>
+      <label for="save-title-input">제목</label>
+      <input id="save-title-input" type="text" />
+      <div class="modal-actions">
+        <button id="cancel-save" class="secondary">취소</button>
+        <button id="confirm-save" class="primary">저장</button>
+      </div>
+    </div>
   </div>
 
   <script src="script.js"></script>

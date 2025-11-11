@@ -25,6 +25,32 @@ body {
   padding: 24px 16px 48px;
 }
 
+.hidden {
+  display: none !important;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+nav.top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.nav-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 header {
   text-align: center;
   margin-bottom: 32px;
@@ -41,6 +67,12 @@ h1 {
   padding: 24px;
   margin-bottom: 24px;
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.dual-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
 }
 
 .card-header {
@@ -62,6 +94,12 @@ table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 16px;
+}
+
+table .empty {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--secondary);
 }
 
 table thead {
@@ -113,9 +151,18 @@ button.secondary {
   color: #ffffff;
 }
 
+.mini-button {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+}
+
 button.danger {
   background-color: var(--danger);
   color: #ffffff;
+}
+
+table td button + button {
+  margin-left: 8px;
 }
 
 button:hover {
@@ -177,13 +224,20 @@ button:disabled {
 
 .totals {
   display: flex;
-  gap: 24px;
-  margin-bottom: 12px;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
   font-weight: 600;
 }
 
 .totals span {
   color: var(--primary);
+}
+
+.totals-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .distribution-input {
@@ -194,9 +248,69 @@ button:disabled {
   width: 100%;
 }
 
+.input-with-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-controls .control-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.save-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 24px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.4);
+  z-index: 99;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal.hidden,
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.modal-content {
+  background-color: var(--card-bg);
+  border-radius: 12px;
+  padding: 24px;
+  width: min(90vw, 420px);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 @media (max-width: 768px) {
   .card {
     padding: 16px;
+  }
+
+  .dual-layout {
+    grid-template-columns: 1fr;
   }
 
   table th,
