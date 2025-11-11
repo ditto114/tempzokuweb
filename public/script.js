@@ -11,7 +11,15 @@ const guestSaleOptions = [
   { label: '2499수작', multiplier: 1 - 0.04 }
 ];
 
+const guestDefaultItems = ['목걸이 1', '목걸이 2', '알'];
+
 let members = [];
+let baseMembers = [];
+let isReadOnly = false;
+let currentDistributionId = null;
+let currentTitle = '';
+let currentView = 'list';
+let useBaseMembersForEditor = true;
 
 function formatCurrency(value) {
   const number = Number(value);
@@ -25,13 +33,54 @@ function toNumber(value, fallback = 0) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-function createTableRow(tableBody, saleOptions, defaultItem = '') {
+function generateDefaultTitle() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const dayName = dayNames[now.getDay()];
+  return `${year}-${month}-${day}(${dayName}) 카스공대 혼테일 분배표`;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+  return date.toLocaleString('ko-KR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function setPageTitle(title) {
+  currentTitle = title;
+  const titleElement = document.getElementById('page-title');
+  if (!titleElement) {
+    return;
+  }
+  if (currentView === 'list') {
+    titleElement.textContent = '분배표 목록';
+  } else {
+    titleElement.textContent = title || generateDefaultTitle();
+  }
+}
+
+function createTableRow(tableBody, saleOptions, rowData = {}) {
   const row = document.createElement('tr');
 
   const itemCell = document.createElement('td');
   const itemInput = document.createElement('input');
   itemInput.type = 'text';
-  itemInput.value = defaultItem;
+  itemInput.value = rowData.item || '';
+  itemInput.placeholder = rowData.placeholder || '';
+  if (isReadOnly) {
+    itemInput.disabled = true;
+  }
   itemCell.appendChild(itemInput);
 
   const priceCell = document.createElement('td');
@@ -40,6 +89,12 @@ function createTableRow(tableBody, saleOptions, defaultItem = '') {
   priceInput.min = '0';
   priceInput.step = 'any';
   priceInput.placeholder = '0';
+  if (rowData.price !== undefined) {
+    priceInput.value = rowData.price;
+  }
+  if (isReadOnly) {
+    priceInput.disabled = true;
+  }
   priceCell.appendChild(priceInput);
 
   const methodCell = document.createElement('td');
@@ -51,6 +106,16 @@ function createTableRow(tableBody, saleOptions, defaultItem = '') {
     optionElement.dataset.multiplier = option.multiplier;
     methodSelect.appendChild(optionElement);
   });
+
+  if (rowData.method) {
+    const matching = Array.from(methodSelect.options).find((option) => option.value === rowData.method);
+    if (matching) {
+      methodSelect.value = matching.value;
+    }
+  }
+  if (isReadOnly) {
+    methodSelect.disabled = true;
+  }
   methodCell.appendChild(methodSelect);
 
   const netCell = document.createElement('td');
@@ -64,7 +129,8 @@ function createTableRow(tableBody, saleOptions, defaultItem = '') {
 
   function updateRowValues() {
     const price = parseFloat(priceInput.value) || 0;
-    const multiplier = parseFloat(methodSelect.selectedOptions[0].dataset.multiplier) || 0;
+    const selectedOption = methodSelect.selectedOptions[0];
+    const multiplier = selectedOption ? parseFloat(selectedOption.dataset.multiplier) || 0 : 0;
     const netValue = price * multiplier;
     netInput.value = formatCurrency(netValue);
     netInput.dataset.value = String(netValue);
@@ -81,6 +147,45 @@ function createTableRow(tableBody, saleOptions, defaultItem = '') {
 
   tableBody.appendChild(row);
   updateRowValues();
+}
+
+function populateSaleTable(tableId, saleOptions, rowsData, fallbackRows = 0) {
+  const tableBody = document.querySelector(`#${tableId} tbody`);
+  if (!tableBody) {
+    return;
+  }
+  tableBody.innerHTML = '';
+  const rows = rowsData && rowsData.length > 0 ? rowsData : Array.from({ length: fallbackRows }, () => ({}));
+  rows.forEach((row) => {
+    createTableRow(tableBody, saleOptions, row);
+  });
+  if (rows.length === 0) {
+    updateTotals();
+  }
+}
+
+function getSaleTableData(tableId, saleOptions) {
+  const tableBody = document.querySelector(`#${tableId} tbody`);
+  if (!tableBody) {
+    return [];
+  }
+  return Array.from(tableBody.querySelectorAll('tr')).map((row) => {
+    const itemInput = row.querySelector('td:nth-child(1) input');
+    const priceInput = row.querySelector('td:nth-child(2) input');
+    const methodSelect = row.querySelector('td:nth-child(3) select');
+    const netInput = row.querySelector('.net-amount');
+
+    const method = methodSelect ? methodSelect.value : saleOptions[0].label;
+    const multiplier = saleOptions.find((option) => option.label === method)?.multiplier ?? saleOptions[0].multiplier;
+
+    return {
+      item: itemInput ? itemInput.value : '',
+      price: priceInput ? toNumber(priceInput.value, 0) : 0,
+      method,
+      multiplier,
+      net: netInput ? toNumber(netInput.dataset.value, 0) : 0,
+    };
+  });
 }
 
 function getTotalNet() {
@@ -152,23 +257,109 @@ function calculateDistribution(totalNet) {
   return { baseShare, finalAmounts, totalIncentives };
 }
 
-function updateTotals() {
+function updateTotals(distributionData = null) {
   const total = getTotalNet();
+  const calculated = distributionData || calculateDistribution(total);
+  const totalIncentiveBonus = total * 0.01;
+  const totalIncentiveValue = calculated.totalIncentives + totalIncentiveBonus;
+  const totalDistribution = total - totalIncentiveValue;
+
   const totalLabel = document.getElementById('total-net');
-  totalLabel.textContent = formatCurrency(total);
-  updateDistributionTable(total);
+  if (totalLabel) {
+    totalLabel.textContent = formatCurrency(total);
+  }
+
+  const totalIncentiveLabel = document.getElementById('total-incentive');
+  if (totalIncentiveLabel) {
+    totalIncentiveLabel.textContent = formatCurrency(totalIncentiveValue);
+  }
+
+  const totalDistributionLabel = document.getElementById('total-distribution');
+  if (totalDistributionLabel) {
+    totalDistributionLabel.textContent = formatCurrency(totalDistribution);
+  }
+
+  updateDistributionTable(total, calculated);
 }
 
-function updateDistributionTable(totalNet = getTotalNet()) {
+function createRateControls(member, rateCell, rateValue) {
+  const wrapper = document.createElement('div');
+  wrapper.classList.add('input-with-controls');
+
+  const rateInput = document.createElement('input');
+  rateInput.type = 'number';
+  rateInput.min = '0';
+  rateInput.step = '1';
+  rateInput.value = rateValue;
+  rateInput.classList.add('distribution-input');
+
+  const controlContainer = document.createElement('div');
+  controlContainer.classList.add('control-buttons');
+
+  const increaseButton = document.createElement('button');
+  increaseButton.type = 'button';
+  increaseButton.textContent = '+5%';
+  increaseButton.classList.add('mini-button');
+  increaseButton.dataset.lockable = 'true';
+
+  const decreaseButton = document.createElement('button');
+  decreaseButton.type = 'button';
+  decreaseButton.textContent = '-5%';
+  decreaseButton.classList.add('mini-button');
+  decreaseButton.dataset.lockable = 'true';
+
+  function commitRateChange(newValue) {
+    const safeValue = Math.max(0, toNumber(newValue, 0));
+    member.rate = safeValue;
+    rateInput.value = safeValue;
+    updateTotals();
+  }
+
+  rateInput.addEventListener('change', () => {
+    commitRateChange(rateInput.value);
+  });
+
+  increaseButton.addEventListener('click', () => {
+    if (isReadOnly) {
+      return;
+    }
+    commitRateChange(toNumber(rateInput.value, rateValue) + 5);
+  });
+
+  decreaseButton.addEventListener('click', () => {
+    if (isReadOnly) {
+      return;
+    }
+    commitRateChange(toNumber(rateInput.value, rateValue) - 5);
+  });
+
+  if (isReadOnly) {
+    rateInput.disabled = true;
+    increaseButton.disabled = true;
+    decreaseButton.disabled = true;
+  }
+
+  controlContainer.appendChild(increaseButton);
+  controlContainer.appendChild(decreaseButton);
+  wrapper.appendChild(rateInput);
+  wrapper.appendChild(controlContainer);
+  rateCell.appendChild(wrapper);
+}
+
+function updateDistributionTable(totalNet = getTotalNet(), distributionData = null) {
   const tableBody = document.querySelector('#distribution-table tbody');
+  if (!tableBody) {
+    return;
+  }
   tableBody.innerHTML = '';
 
   const memberCount = members.length;
   const memberCountLabel = document.getElementById('member-count');
-  memberCountLabel.textContent = String(memberCount);
+  if (memberCountLabel) {
+    memberCountLabel.textContent = String(memberCount);
+  }
 
-  const { baseShare, finalAmounts } = calculateDistribution(totalNet);
-
+  const { baseShare, finalAmounts, totalIncentives } = distributionData || calculateDistribution(totalNet);
   const rowsToRender = Math.max(20, memberCount);
 
   for (let i = 0; i < rowsToRender; i += 1) {
@@ -188,17 +379,7 @@ function updateDistributionTable(totalNet = getTotalNet()) {
       jobCell.textContent = member.job;
       shareCell.textContent = formatCurrency(baseShare);
 
-      const rateInput = document.createElement('input');
-      rateInput.type = 'number';
-      rateInput.min = '0';
-      rateInput.step = '1';
-      rateInput.value = member.rate ?? 100;
-      rateInput.classList.add('distribution-input');
-      rateInput.addEventListener('input', () => {
-        member.rate = Math.max(0, toNumber(rateInput.value, 0));
-        updateDistributionTable();
-      });
-      rateCell.appendChild(rateInput);
+      createRateControls(member, rateCell, member.rate ?? 100);
 
       const deductionInput = document.createElement('input');
       deductionInput.type = 'number';
@@ -206,10 +387,13 @@ function updateDistributionTable(totalNet = getTotalNet()) {
       deductionInput.step = '0.1';
       deductionInput.value = member.deduction ?? 0;
       deductionInput.classList.add('distribution-input');
-      deductionInput.addEventListener('input', () => {
+      deductionInput.addEventListener('change', () => {
         member.deduction = Math.max(0, toNumber(deductionInput.value, 0));
-        updateDistributionTable();
+        updateTotals();
       });
+      if (isReadOnly) {
+        deductionInput.disabled = true;
+      }
       deductionCell.appendChild(deductionInput);
 
       const incentiveInput = document.createElement('input');
@@ -218,13 +402,16 @@ function updateDistributionTable(totalNet = getTotalNet()) {
       incentiveInput.step = '0.1';
       incentiveInput.value = member.incentive ?? 0;
       incentiveInput.classList.add('distribution-input');
-      incentiveInput.addEventListener('input', () => {
+      incentiveInput.addEventListener('change', () => {
         member.incentive = Math.max(0, toNumber(incentiveInput.value, 0));
-        updateDistributionTable();
+        updateTotals();
       });
+      if (isReadOnly) {
+        incentiveInput.disabled = true;
+      }
       incentiveCell.appendChild(incentiveInput);
 
-      finalCell.textContent = formatCurrency(finalAmounts[i]);
+      finalCell.textContent = formatCurrency(finalAmounts[i] ?? 0);
     } else {
       nicknameCell.textContent = '';
       jobCell.textContent = '';
@@ -247,6 +434,13 @@ function updateDistributionTable(totalNet = getTotalNet()) {
   }
 
   updateMemberManagement();
+  const totalIncentiveLabel = document.getElementById('total-incentive');
+  if (totalIncentiveLabel) {
+    const totalIncentiveBonus = totalNet * 0.01;
+    totalIncentiveLabel.textContent = formatCurrency(totalIncentives + totalIncentiveBonus);
+  }
+
+  applyReadOnlyState();
 }
 
 function updateMemberManagement() {
@@ -281,7 +475,11 @@ function updateMemberManagement() {
     const deleteButton = document.createElement('button');
     deleteButton.textContent = '삭제';
     deleteButton.classList.add('danger');
+    deleteButton.dataset.lockable = 'true';
     deleteButton.addEventListener('click', () => deleteMember(member.id));
+    if (isReadOnly) {
+      deleteButton.disabled = true;
+    }
     actionCell.appendChild(deleteButton);
 
     row.appendChild(nicknameCell);
@@ -313,16 +511,22 @@ async function fetchMembers() {
     }
     const data = await response.json();
     const previousMembers = new Map(members.map((member) => [member.id, member]));
-    members = data.map((member) => {
+    baseMembers = data.map((member) => {
       const previous = previousMembers.get(member.id);
       return {
         ...member,
         rate: previous ? previous.rate : 100,
         deduction: previous ? previous.deduction : 0,
-        incentive: previous ? previous.incentive : 0
+        incentive: previous ? previous.incentive : 0,
       };
     });
-    updateDistributionTable();
+
+    if (useBaseMembersForEditor || members.length === 0) {
+      members = baseMembers.map((member) => ({ ...member }));
+      if (currentView === 'editor') {
+        updateTotals();
+      }
+    }
   } catch (error) {
     console.error(error);
     alert('공대원 목록을 불러오는 중 문제가 발생했습니다.');
@@ -345,9 +549,9 @@ async function saveMember() {
     const response = await fetch('/api/members', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ nickname, job })
+      body: JSON.stringify({ nickname, job }),
     });
 
     if (!response.ok) {
@@ -359,6 +563,7 @@ async function saveMember() {
     jobInput.value = '';
     toggleMemberForm(false);
     await fetchMembers();
+    updateTotals();
   } catch (error) {
     console.error(error);
     alert(error.message || '공대원을 추가하는 중 문제가 발생했습니다.');
@@ -366,13 +571,16 @@ async function saveMember() {
 }
 
 async function deleteMember(id) {
+  if (!id) {
+    return;
+  }
   if (!confirm('해당 공대원을 삭제하시겠습니까?')) {
     return;
   }
 
   try {
     const response = await fetch(`/api/members/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
     });
 
     if (!response.ok && response.status !== 204) {
@@ -381,6 +589,7 @@ async function deleteMember(id) {
     }
 
     await fetchMembers();
+    updateTotals();
   } catch (error) {
     console.error(error);
     alert(error.message || '공대원을 삭제하는 중 문제가 발생했습니다.');
@@ -389,6 +598,9 @@ async function deleteMember(id) {
 
 function toggleMemberForm(visible) {
   const form = document.getElementById('member-form');
+  if (!form) {
+    return;
+  }
   if (visible) {
     form.classList.remove('hidden');
   } else {
@@ -396,44 +608,437 @@ function toggleMemberForm(visible) {
   }
 }
 
-function initTables() {
-  const dropTableBody = document.querySelector('#drop-table tbody');
-  const guestTableBody = document.querySelector('#guest-table tbody');
-
-  for (let i = 0; i < 3; i += 1) {
-    createTableRow(dropTableBody, dropSaleOptions);
+function applyReadOnlyState() {
+  const editorPage = document.getElementById('editor-page');
+  if (!editorPage) {
+    return;
   }
 
-  const guestDefaults = ['목걸이 1', '목걸이 2', '알'];
-  guestDefaults.forEach((itemName) => {
-    createTableRow(guestTableBody, guestSaleOptions, itemName);
+  editorPage.querySelectorAll('input, select').forEach((element) => {
+    if (element.hasAttribute('data-lockable')) {
+      element.disabled = isReadOnly;
+    } else if (element.closest('.modal-content')) {
+      element.disabled = false;
+    } else if (element.classList.contains('net-amount')) {
+      element.disabled = false;
+    } else {
+      element.disabled = isReadOnly;
+    }
   });
 
-  document.getElementById('add-drop-row').addEventListener('click', () => {
-    createTableRow(dropTableBody, dropSaleOptions);
+  editorPage.querySelectorAll('button[data-lockable="true"]').forEach((button) => {
+    button.disabled = isReadOnly;
   });
+}
 
-  document.getElementById('add-guest-row').addEventListener('click', () => {
-    createTableRow(guestTableBody, guestSaleOptions);
+function setReadOnly(readOnly) {
+  isReadOnly = readOnly;
+  applyReadOnlyState();
+  updateNavState();
+}
+
+function prepareNewDistribution() {
+  useBaseMembersForEditor = true;
+  currentDistributionId = null;
+  setReadOnly(false);
+  members = baseMembers.map((member) => ({ ...member }));
+
+  populateSaleTable('drop-table', dropSaleOptions, [], 3);
+  populateSaleTable(
+    'guest-table',
+    guestSaleOptions,
+    guestDefaultItems.map((item) => ({ item })),
+    guestDefaultItems.length,
+  );
+
+  setPageTitle(generateDefaultTitle());
+  updateTotals();
+  showEditorView(false);
+}
+
+function populateFromDistributionData(payload = {}) {
+  const dropData = Array.isArray(payload.dropSales) ? payload.dropSales : [];
+  const guestData = Array.isArray(payload.guestSales) ? payload.guestSales : [];
+  const savedMembers = Array.isArray(payload.members) ? payload.members : [];
+
+  members = savedMembers.map((member) => ({
+    ...member,
+    rate: member.rate ?? 100,
+    deduction: member.deduction ?? 0,
+    incentive: member.incentive ?? 0,
+  }));
+
+  populateSaleTable('drop-table', dropSaleOptions, dropData, 3);
+  populateSaleTable('guest-table', guestSaleOptions, guestData, guestDefaultItems.length);
+  updateTotals();
+}
+
+function showListView() {
+  currentView = 'list';
+  const listPage = document.getElementById('list-page');
+  const editorPage = document.getElementById('editor-page');
+  if (listPage) {
+    listPage.classList.remove('hidden');
+  }
+  if (editorPage) {
+    editorPage.classList.add('hidden');
+  }
+  setPageTitle(currentTitle);
+  updateNavState();
+}
+
+function showEditorView(readOnly = false) {
+  currentView = 'editor';
+  const listPage = document.getElementById('list-page');
+  const editorPage = document.getElementById('editor-page');
+  if (listPage) {
+    listPage.classList.add('hidden');
+  }
+  if (editorPage) {
+    editorPage.classList.remove('hidden');
+  }
+  setReadOnly(readOnly);
+  setPageTitle(currentTitle || generateDefaultTitle());
+  updateTotals();
+}
+
+function updateNavState() {
+  const navList = document.getElementById('nav-list');
+  const navView = document.getElementById('nav-view');
+  const navEdit = document.getElementById('nav-edit');
+  const navCreate = document.getElementById('nav-create');
+
+  if (navList) {
+    navList.disabled = currentView === 'list';
+  }
+  if (navView) {
+    navView.disabled = currentView !== 'editor' || isReadOnly;
+  }
+  if (navEdit) {
+    navEdit.disabled = currentView !== 'editor' || !isReadOnly;
+  }
+  if (navCreate) {
+    navCreate.disabled = currentView !== 'list';
+  }
+}
+
+async function loadDistributionList() {
+  try {
+    const response = await fetch('/api/distributions');
+    if (!response.ok) {
+      throw new Error('분배표 목록을 불러오지 못했습니다.');
+    }
+    const data = await response.json();
+    renderDistributionList(Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.error(error);
+    alert(error.message || '분배표 목록을 불러오는 중 문제가 발생했습니다.');
+  }
+}
+
+function renderDistributionList(distributions) {
+  const tableBody = document.getElementById('distribution-list-body');
+  if (!tableBody) {
+    return;
+  }
+  tableBody.innerHTML = '';
+
+  if (distributions.length === 0) {
+    const emptyRow = document.createElement('tr');
+    const emptyCell = document.createElement('td');
+    emptyCell.colSpan = 4;
+    emptyCell.classList.add('empty');
+    emptyCell.textContent = '저장된 분배표가 없습니다.';
+    emptyRow.appendChild(emptyCell);
+    tableBody.appendChild(emptyRow);
+    return;
+  }
+
+  distributions.forEach((distribution) => {
+    const row = document.createElement('tr');
+
+    const titleCell = document.createElement('td');
+    titleCell.textContent = distribution.title;
+
+    const createdCell = document.createElement('td');
+    createdCell.textContent = formatDateTime(distribution.created_at);
+
+    const updatedCell = document.createElement('td');
+    updatedCell.textContent = formatDateTime(distribution.updated_at);
+
+    const actionCell = document.createElement('td');
+    const viewButton = document.createElement('button');
+    viewButton.textContent = '보기';
+    viewButton.classList.add('secondary');
+    viewButton.addEventListener('click', () => openDistribution(distribution.id, true));
+
+    const editButton = document.createElement('button');
+    editButton.textContent = '수정';
+    editButton.classList.add('primary');
+    editButton.addEventListener('click', () => openDistribution(distribution.id, false));
+
+    actionCell.appendChild(viewButton);
+    actionCell.appendChild(editButton);
+
+    row.appendChild(titleCell);
+    row.appendChild(createdCell);
+    row.appendChild(updatedCell);
+    row.appendChild(actionCell);
+
+    tableBody.appendChild(row);
   });
+}
+
+async function openDistribution(id, readOnly) {
+  try {
+    const response = await fetch(`/api/distributions/${id}`);
+    if (!response.ok) {
+      throw new Error('분배표를 불러오지 못했습니다.');
+    }
+    const data = await response.json();
+    currentDistributionId = data.id;
+    currentTitle = data.title;
+    useBaseMembersForEditor = false;
+    populateFromDistributionData(data.data);
+    showEditorView(readOnly);
+    setPageTitle(currentTitle);
+    updateNavState();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || '분배표를 불러오는 중 문제가 발생했습니다.');
+  }
+}
+
+function toggleSaveModal(visible) {
+  const backdrop = document.getElementById('modal-backdrop');
+  const modal = document.getElementById('save-modal');
+  const titleInput = document.getElementById('save-title-input');
+  if (!backdrop || !modal || !titleInput) {
+    return;
+  }
+
+  if (visible) {
+    titleInput.value = currentTitle || generateDefaultTitle();
+    backdrop.classList.remove('hidden');
+    modal.classList.remove('hidden');
+    titleInput.focus();
+  } else {
+    backdrop.classList.add('hidden');
+    modal.classList.add('hidden');
+  }
+}
+
+function collectDistributionPayload() {
+  const totalNet = getTotalNet();
+  const distributionData = calculateDistribution(totalNet);
+  const incentiveBonus = totalNet * 0.01;
+  const totalIncentive = distributionData.totalIncentives + incentiveBonus;
+  const totalDistribution = totalNet - totalIncentive;
+
+  return {
+    dropSales: getSaleTableData('drop-table', dropSaleOptions),
+    guestSales: getSaleTableData('guest-table', guestSaleOptions),
+    members: members.map((member, index) => ({
+      ...member,
+      finalAmount: distributionData.finalAmounts[index] ?? 0,
+    })),
+    totals: {
+      totalNet,
+      incentiveBonus,
+      totalIncentives: distributionData.totalIncentives,
+      totalIncentiveWithBonus: totalIncentive,
+      totalDistribution,
+      memberCount: members.length,
+      baseShare: distributionData.baseShare,
+    },
+  };
+}
+
+async function handleSaveDistribution() {
+  const titleInput = document.getElementById('save-title-input');
+  if (!titleInput) {
+    return;
+  }
+
+  const title = titleInput.value.trim();
+  if (!title) {
+    alert('제목을 입력해주세요.');
+    return;
+  }
+
+  const payload = collectDistributionPayload();
+
+  try {
+    const response = await fetch(currentDistributionId ? `/api/distributions/${currentDistributionId}` : '/api/distributions', {
+      method: currentDistributionId ? 'PUT' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ title, data: payload }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: '분배표를 저장하지 못했습니다.' }));
+      throw new Error(data.message || '분배표를 저장하지 못했습니다.');
+    }
+
+    const saved = await response.json();
+    currentDistributionId = saved.id;
+    currentTitle = saved.title;
+    setPageTitle(currentTitle);
+    toggleSaveModal(false);
+    alert('분배표가 저장되었습니다.');
+    await loadDistributionList();
+    updateNavState();
+  } catch (error) {
+    console.error(error);
+    alert(error.message || '분배표를 저장하는 중 문제가 발생했습니다.');
+  }
+}
+
+function initTables() {
+  populateSaleTable('drop-table', dropSaleOptions, [], 3);
+  populateSaleTable(
+    'guest-table',
+    guestSaleOptions,
+    guestDefaultItems.map((item) => ({ item })),
+    guestDefaultItems.length,
+  );
+
+  const addDropButton = document.getElementById('add-drop-row');
+  if (addDropButton) {
+    addDropButton.addEventListener('click', () => {
+      const dropTableBody = document.querySelector('#drop-table tbody');
+      if (dropTableBody) {
+        createTableRow(dropTableBody, dropSaleOptions, {});
+      }
+    });
+  }
+
+  const addGuestButton = document.getElementById('add-guest-row');
+  if (addGuestButton) {
+    addGuestButton.addEventListener('click', () => {
+      const guestTableBody = document.querySelector('#guest-table tbody');
+      if (guestTableBody) {
+        createTableRow(guestTableBody, guestSaleOptions, {});
+      }
+    });
+  }
 }
 
 function initMemberControls() {
-  document.getElementById('add-member-btn').addEventListener('click', () => toggleMemberForm(true));
-  document.getElementById('cancel-member').addEventListener('click', () => toggleMemberForm(false));
-  document.getElementById('save-member').addEventListener('click', (event) => {
-    event.preventDefault();
-    saveMember();
-  });
-  document.getElementById('manage-members-btn').addEventListener('click', () => {
-    updateMemberManagement();
-    toggleMemberManagement(true);
-  });
-  document.getElementById('close-management').addEventListener('click', () => toggleMemberManagement(false));
+  const addMemberButton = document.getElementById('add-member-btn');
+  if (addMemberButton) {
+    addMemberButton.addEventListener('click', () => toggleMemberForm(true));
+  }
+  const cancelMemberButton = document.getElementById('cancel-member');
+  if (cancelMemberButton) {
+    cancelMemberButton.addEventListener('click', () => toggleMemberForm(false));
+  }
+  const saveMemberButton = document.getElementById('save-member');
+  if (saveMemberButton) {
+    saveMemberButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      saveMember();
+    });
+  }
+  const manageMembersButton = document.getElementById('manage-members-btn');
+  if (manageMembersButton) {
+    manageMembersButton.addEventListener('click', () => {
+      updateMemberManagement();
+      toggleMemberManagement(true);
+    });
+  }
+  const closeManagementButton = document.getElementById('close-management');
+  if (closeManagementButton) {
+    closeManagementButton.addEventListener('click', () => toggleMemberManagement(false));
+  }
+
+  const navListButton = document.getElementById('nav-list');
+  if (navListButton) {
+    navListButton.addEventListener('click', () => {
+      toggleSaveModal(false);
+      showListView();
+    });
+  }
+
+  const navCreateButton = document.getElementById('nav-create');
+  if (navCreateButton) {
+    navCreateButton.addEventListener('click', () => {
+      prepareNewDistribution();
+    });
+  }
+
+  const navViewButton = document.getElementById('nav-view');
+  if (navViewButton) {
+    navViewButton.addEventListener('click', () => {
+      if (currentView === 'editor') {
+        setReadOnly(true);
+      }
+    });
+  }
+
+  const navEditButton = document.getElementById('nav-edit');
+  if (navEditButton) {
+    navEditButton.addEventListener('click', () => {
+      if (currentView === 'editor') {
+        setReadOnly(false);
+      }
+    });
+  }
+
+  const listCreateButton = document.getElementById('list-create');
+  if (listCreateButton) {
+    listCreateButton.addEventListener('click', () => {
+      prepareNewDistribution();
+    });
+  }
+
+  const refreshDistributionsButton = document.getElementById('refresh-distributions');
+  if (refreshDistributionsButton) {
+    refreshDistributionsButton.addEventListener('click', () => {
+      loadDistributionList();
+    });
+  }
+
+  const openSaveModalButton = document.getElementById('open-save-modal');
+  if (openSaveModalButton) {
+    openSaveModalButton.addEventListener('click', () => {
+      if (isReadOnly) {
+        return;
+      }
+      toggleSaveModal(true);
+    });
+  }
+
+  const cancelSaveButton = document.getElementById('cancel-save');
+  if (cancelSaveButton) {
+    cancelSaveButton.addEventListener('click', () => {
+      toggleSaveModal(false);
+    });
+  }
+
+  const confirmSaveButton = document.getElementById('confirm-save');
+  if (confirmSaveButton) {
+    confirmSaveButton.addEventListener('click', () => {
+      handleSaveDistribution();
+    });
+  }
+
+  const backdrop = document.getElementById('modal-backdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', () => toggleSaveModal(false));
+  }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  currentTitle = generateDefaultTitle();
   initTables();
   initMemberControls();
-  fetchMembers();
+  await fetchMembers();
+  await loadDistributionList();
+  showListView();
+  updateTotals();
+  setPageTitle(currentTitle);
+  updateNavState();
 });
