@@ -51,6 +51,13 @@ h1 {
   margin-bottom: 16px;
 }
 
+.card-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -144,6 +151,30 @@ button:disabled {
   align-items: center;
 }
 
+.member-management {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: #f8fafc;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.member-management.hidden {
+  display: none;
+}
+
+.member-management-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.member-management table {
+  margin-bottom: 0;
+}
+
 .totals {
   display: flex;
   gap: 24px;
@@ -155,7 +186,11 @@ button:disabled {
   color: var(--primary);
 }
 
-.delete-btn {
+.distribution-input {
+  width: 100%;
+}
+
+.member-management .danger {
   width: 100%;
 }
 
