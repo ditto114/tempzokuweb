@@ -64,7 +64,7 @@ function setPageTitle(title) {
     return;
   }
   if (currentView === 'list') {
-    titleElement.textContent = '분배표 목록';
+    titleElement.textContent = '카스공대 혼테일 분배표';
   } else {
     titleElement.textContent = title || generateDefaultTitle();
   }

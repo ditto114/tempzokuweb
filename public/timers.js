@@ -444,7 +444,7 @@ function createResetSlider(timer) {
   const knob = document.createElement('button');
   knob.type = 'button';
   knob.className = 'timer-reset-knob';
-  knob.textContent = '➜';
+  knob.textContent = '';
 
   slider.appendChild(label);
   slider.appendChild(knob);
