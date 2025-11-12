@@ -6,6 +6,9 @@ const timerListElement = document.getElementById('timer-list');
 const statusElement = document.getElementById('timer-stream-status');
 const addTimerButton = document.getElementById('add-timer-button');
 const toggleEditButton = document.getElementById('toggle-edit-mode');
+const gridSettingsPanel = document.getElementById('timer-grid-settings');
+const gridColumnsInput = document.getElementById('timer-grid-columns');
+const gridRowsInput = document.getElementById('timer-grid-rows');
 
 const timers = new Map();
 const timerDisplays = new Map();
@@ -14,6 +17,9 @@ const timerProgressBars = new Map();
 let eventSource = null;
 let isEditMode = false;
 let draggedTimerId = null;
+const GRID_SETTINGS_STORAGE_KEY = 'timer-grid-settings';
+const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
+let gridSettings = loadGridSettings();
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -79,6 +85,87 @@ function sortTimersForDisplay(values = Array.from(timers.values())) {
     }
     return a.id - b.id;
   });
+}
+
+function clampGridValue(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.floor(numeric)));
+}
+
+function normalizeGridSettings(raw = {}) {
+  const columns = clampGridValue(raw.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
+  const rows = clampGridValue(raw.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
+  return { columns, rows };
+}
+
+function loadGridSettings() {
+  try {
+    const stored = window.localStorage?.getItem(GRID_SETTINGS_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return normalizeGridSettings(parsed);
+    }
+  } catch (error) {
+    console.warn('Failed to load grid settings:', error);
+  }
+  return { ...DEFAULT_GRID_SETTINGS };
+}
+
+function saveGridSettings(settings) {
+  try {
+    window.localStorage?.setItem(GRID_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn('Failed to save grid settings:', error);
+  }
+}
+
+function applyGridSettings() {
+  if (!timerListElement || !gridSettings) {
+    return;
+  }
+  timerListElement.style.setProperty('--timer-grid-columns', String(gridSettings.columns));
+  timerListElement.style.setProperty('--timer-grid-rows', String(gridSettings.rows));
+}
+
+function syncGridSettingsInputs() {
+  if (!gridColumnsInput || !gridRowsInput || !gridSettings) {
+    return;
+  }
+  gridColumnsInput.value = String(gridSettings.columns);
+  gridRowsInput.value = String(gridSettings.rows);
+}
+
+function updateGridSettingsVisibility() {
+  if (!gridSettingsPanel) {
+    return;
+  }
+  gridSettingsPanel.classList.toggle('hidden', !isEditMode);
+  if (isEditMode) {
+    syncGridSettingsInputs();
+  }
+}
+
+function handleGridSettingsChange() {
+  if (!gridColumnsInput || !gridRowsInput) {
+    return;
+  }
+  const nextSettings = normalizeGridSettings({
+    columns: gridColumnsInput.value,
+    rows: gridRowsInput.value,
+  });
+  if (
+    nextSettings.columns === gridSettings.columns &&
+    nextSettings.rows === gridSettings.rows
+  ) {
+    return;
+  }
+  gridSettings = nextSettings;
+  saveGridSettings(gridSettings);
+  applyGridSettings();
+  renderTimers();
 }
 
 function applyTimerList(list) {
@@ -150,8 +237,8 @@ function createTimerCard(timer) {
     nameElement.textContent = timer.name;
   }
 
-  infoHeader.appendChild(repeatButton);
   infoHeader.appendChild(nameElement);
+  infoHeader.appendChild(repeatButton);
 
   const display = document.createElement('div');
   const remaining = getTimerRemaining(timer);
@@ -196,18 +283,21 @@ function createTimerCard(timer) {
   info.appendChild(infoHeader);
   info.appendChild(display);
 
-  const progress = document.createElement('div');
-  progress.className = 'timer-progress';
-  const progressInner = document.createElement('div');
-  progressInner.className = 'timer-progress-bar';
-  const durationMs = Math.max(timer.durationMs, 1);
-  const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
-  progressInner.style.width = `${progressRatio * 100}%`;
-  if (remaining > 0 && remaining <= 60 * 1000) {
-    progressInner.classList.add('critical');
+  let progress = null;
+  if (timer.isRunning) {
+    progress = document.createElement('div');
+    progress.className = 'timer-progress';
+    const progressInner = document.createElement('div');
+    progressInner.className = 'timer-progress-bar';
+    const durationMs = Math.max(timer.durationMs, 1);
+    const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
+    progressInner.style.width = `${progressRatio * 100}%`;
+    if (remaining > 0 && remaining <= 60 * 1000) {
+      progressInner.classList.add('critical');
+    }
+    progress.appendChild(progressInner);
+    timerProgressBars.set(timer.id, progressInner);
   }
-  progress.appendChild(progressInner);
-  timerProgressBars.set(timer.id, progressInner);
 
   let actionElement = null;
   if (isEditMode) {
@@ -232,7 +322,9 @@ function createTimerCard(timer) {
   }
 
   card.appendChild(info);
-  card.appendChild(progress);
+  if (progress) {
+    card.appendChild(progress);
+  }
   if (actionElement) {
     card.appendChild(actionElement);
   }
@@ -485,6 +577,7 @@ function renderTimers() {
     return;
   }
 
+  applyGridSettings();
   clearTimerDisplays();
   timerListElement.innerHTML = '';
 
@@ -518,32 +611,19 @@ function appendDropSlots(fragment, timerCount) {
     return;
   }
 
-  const columnCount = Math.max(1, getGridColumnCount(timerListElement));
-  const remainder = timerCount % columnCount;
-  const baseSlots = columnCount;
-  const extraSlots = remainder === 0 ? baseSlots : columnCount - remainder;
-  const totalSlots = timerCount === 0 ? baseSlots : extraSlots;
+  const columns = clampGridValue(gridSettings?.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
+  const rows = clampGridValue(gridSettings?.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
+  const desiredSlots = Math.max(columns * rows, timerCount);
+  let slotsAdded = 0;
 
-  for (let index = 0; index < totalSlots; index += 1) {
-    fragment.appendChild(createDropSlot(timerCount + index));
+  for (let index = timerCount; index < desiredSlots; index += 1) {
+    fragment.appendChild(createDropSlot(index));
+    slotsAdded += 1;
   }
-}
 
-function getGridColumnCount(element) {
-  if (!element) {
-    return 0;
+  if (slotsAdded === 0) {
+    fragment.appendChild(createDropSlot(timerCount));
   }
-  const template = window.getComputedStyle(element).gridTemplateColumns || '';
-  const repeatMatch = template.match(/repeat\((\d+)/);
-  if (repeatMatch) {
-    return Number.parseInt(repeatMatch[1], 10) || 0;
-  }
-  const minmaxMatches = template.match(/minmax\(/g);
-  if (minmaxMatches && minmaxMatches.length > 0) {
-    return minmaxMatches.length;
-  }
-  const parts = template.trim().split(/\s+/).filter(Boolean);
-  return parts.length;
 }
 
 function createDropSlot(index) {
@@ -584,6 +664,14 @@ function updateTimerDisplays() {
 
     const progressElement = timerProgressBars.get(id);
     if (progressElement) {
+      if (!timer.isRunning) {
+        timerProgressBars.delete(id);
+        const progressContainer = progressElement.parentElement;
+        if (progressContainer && progressContainer.parentElement) {
+          progressContainer.parentElement.removeChild(progressContainer);
+        }
+        return;
+      }
       const duration = Math.max(timer.durationMs, 1);
       const ratio = Math.max(0, Math.min(1, remaining / duration));
       progressElement.style.width = `${ratio * 100}%`;
@@ -700,6 +788,7 @@ function toggleEditMode() {
   if (toggleEditButton) {
     toggleEditButton.textContent = isEditMode ? '수정 완료' : '수정';
   }
+  updateGridSettingsVisibility();
   clearDropIndicators();
   renderTimers();
 }
@@ -925,6 +1014,22 @@ if (addTimerButton) {
 if (toggleEditButton) {
   toggleEditButton.addEventListener('click', () => toggleEditMode());
 }
+
+if (gridColumnsInput) {
+  ['change', 'input'].forEach((eventName) => {
+    gridColumnsInput.addEventListener(eventName, handleGridSettingsChange);
+  });
+}
+
+if (gridRowsInput) {
+  ['change', 'input'].forEach((eventName) => {
+    gridRowsInput.addEventListener(eventName, handleGridSettingsChange);
+  });
+}
+
+syncGridSettingsInputs();
+updateGridSettingsVisibility();
+applyGridSettings();
 
 window.setInterval(() => {
   updateTimerDisplays();

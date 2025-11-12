@@ -6,6 +6,8 @@
   --text: #1f2933;
   --border: #d2d6dc;
   --danger: #e02424;
+  --timer-grid-columns: 3;
+  --timer-grid-rows: 2;
 }
 
 * {
@@ -418,10 +420,38 @@ button:disabled {
 
 .timer-card-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--timer-grid-columns, 3), minmax(0, 1fr));
   grid-auto-rows: minmax(100px, auto);
   gap: 16px;
   align-content: start;
+}
+
+.timer-grid-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(74, 108, 247, 0.08);
+  border: 1px solid rgba(74, 108, 247, 0.25);
+}
+
+.timer-grid-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--secondary);
+}
+
+.timer-grid-settings-row input {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
 }
 
 .timer-card {
@@ -445,14 +475,18 @@ button:disabled {
 
 .timer-card-info-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .timer-card-name {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--secondary);
+  text-align: center;
+  width: 100%;
 }
 
 .timer-card-name-input {
@@ -463,6 +497,7 @@ button:disabled {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text);
+  text-align: center;
 }
 
 .timer-card-name-input:focus {
@@ -471,8 +506,9 @@ button:disabled {
 }
 
 .repeat-button {
-  min-width: 72px;
-  font-size: 0.85rem;
+  min-width: 50px;
+  padding: 5px 12px;
+  font-size: 0.75rem;
 }
 
 .repeat-button.active {
@@ -509,6 +545,7 @@ button:disabled {
   padding: 14px 16px;
   border-radius: 0;
   border-top: 1px solid var(--border);
+  min-height: 52px;
 }
 
 .timer-card-action.danger {
@@ -517,11 +554,14 @@ button:disabled {
 }
 
 .timer-card-reset-area {
-  padding: 8px 16px;
+  padding: 0;
+  background: var(--primary);
+  color: #ffffff;
 }
 
 .timer-card-reset-area .timer-reset-slider {
   width: 100%;
+  height: 100%;
 }
 
 .timer-card-display-editable {
@@ -666,17 +706,16 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 0 16px;
-  height: 40px;
-  background: #eef2ff;
-  border-radius: 999px;
+  gap: 12px;
+  padding: 0 18px;
+  height: 100%;
+  background: transparent;
+  border-radius: 8px;
   overflow: hidden;
   touch-action: none;
   user-select: none;
   isolation: isolate;
   box-sizing: border-box;
-  width: 100%;
   --slider-progress: 0;
 }
 
@@ -685,7 +724,7 @@ button:disabled {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, rgba(74, 108, 247, 0.12) 0%, rgba(74, 108, 247, 0.35) 100%);
+  background: rgba(255, 255, 255, 0.18);
   transform: scaleX(var(--slider-progress));
   transform-origin: left center;
   transition: transform 0.12s ease;
@@ -702,33 +741,34 @@ button:disabled {
   text-align: center;
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--secondary);
+  color: #ffffff;
   pointer-events: none;
   transition: opacity 0.2s ease;
 }
 
 .timer-reset-knob {
   position: absolute;
-  left: 12px;
+  left: 18px;
+  top: 6px;
+  bottom: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 96px;
+  border-radius: 8px;
   border: none;
-  background: var(--primary);
+  background: rgba(255, 255, 255, 0.22);
   color: #ffffff;
   font-size: 1.1rem;
   cursor: grab;
-  box-shadow: 0 6px 14px rgba(74, 108, 247, 0.25);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
   transition: box-shadow 0.2s ease, transform 0.2s ease;
   touch-action: none;
 }
 
 .timer-reset-slider.dragging .timer-reset-knob {
   cursor: grabbing;
-  box-shadow: 0 8px 18px rgba(74, 108, 247, 0.35);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
 }
 
 .timer-reset-knob:disabled {
