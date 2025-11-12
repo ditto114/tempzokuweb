@@ -237,9 +237,14 @@ async function initializeDatabase() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
-  await connection.query(
-    'ALTER TABLE timers ADD COLUMN IF NOT EXISTS display_order INT NOT NULL DEFAULT 0',
+  const [displayOrderColumn] = await connection.query(
+    "SHOW COLUMNS FROM timers LIKE 'display_order'",
   );
+  if (displayOrderColumn.length === 0) {
+    await connection.query(
+      'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
+    );
+  }
   await connection.query(
     'UPDATE timers SET display_order = id WHERE display_order IS NULL OR display_order = 0',
   );
