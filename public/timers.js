@@ -18,9 +18,8 @@ let eventSource = null;
 let isEditMode = false;
 let draggedTimerId = null;
 let slotLayout = [];
-const GRID_SETTINGS_STORAGE_KEY = 'timer-grid-settings';
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
-let gridSettings = loadGridSettings();
+let gridSettings = { ...DEFAULT_GRID_SETTINGS };
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -102,33 +101,52 @@ function normalizeGridSettings(raw = {}) {
   return { columns, rows };
 }
 
-function loadGridSettings() {
-  try {
-    const stored = window.localStorage?.getItem(GRID_SETTINGS_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return normalizeGridSettings(parsed);
-    }
-  } catch (error) {
-    console.warn('Failed to load grid settings:', error);
-  }
-  return { ...DEFAULT_GRID_SETTINGS };
-}
-
-function saveGridSettings(settings) {
-  try {
-    window.localStorage?.setItem(GRID_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  } catch (error) {
-    console.warn('Failed to save grid settings:', error);
-  }
-}
-
 function applyGridSettings() {
   if (!timerListElement || !gridSettings) {
     return;
   }
   timerListElement.style.setProperty('--timer-grid-columns', String(gridSettings.columns));
   timerListElement.style.setProperty('--timer-grid-rows', String(gridSettings.rows));
+}
+
+function setGridSettings(nextSettings, { shouldRender = true, syncInputs = true } = {}) {
+  const normalized = normalizeGridSettings(nextSettings);
+  const hasChanged =
+    normalized.columns !== gridSettings.columns || normalized.rows !== gridSettings.rows;
+
+  gridSettings = normalized;
+  applyGridSettings();
+
+  if (syncInputs) {
+    syncGridSettingsInputs();
+  }
+
+  if (hasChanged && shouldRender) {
+    renderTimers();
+  }
+
+  return hasChanged;
+}
+
+async function persistGridSettings(settings) {
+  try {
+    const response = await fetch('/api/timers/grid-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to persist grid settings');
+    }
+    const data = await response.json();
+    if (data?.gridSettings) {
+      setGridSettings(data.gridSettings, { shouldRender: false, syncInputs: true });
+    }
+  } catch (error) {
+    console.error('Failed to save grid settings:', error);
+    updateStatus('타이머 슬롯 설정을 저장하지 못했습니다.', true);
+    fetchTimers();
+  }
 }
 
 function syncGridSettingsInputs() {
@@ -149,7 +167,7 @@ function updateGridSettingsVisibility() {
   }
 }
 
-function handleGridSettingsChange() {
+async function handleGridSettingsChange() {
   if (!gridColumnsInput || !gridRowsInput) {
     return;
   }
@@ -157,16 +175,24 @@ function handleGridSettingsChange() {
     columns: gridColumnsInput.value,
     rows: gridRowsInput.value,
   });
-  if (
-    nextSettings.columns === gridSettings.columns &&
-    nextSettings.rows === gridSettings.rows
-  ) {
+  const hasChanged = setGridSettings(nextSettings, { shouldRender: true, syncInputs: false });
+  syncGridSettingsInputs();
+  if (hasChanged) {
+    await persistGridSettings(gridSettings);
+  }
+}
+
+function applyTimerState(state) {
+  if (!state || typeof state !== 'object') {
     return;
   }
-  gridSettings = nextSettings;
-  saveGridSettings(gridSettings);
-  applyGridSettings();
-  renderTimers();
+  const hasTimers = Array.isArray(state.timers);
+  if (state.gridSettings) {
+    setGridSettings(state.gridSettings, { shouldRender: !hasTimers, syncInputs: isEditMode });
+  }
+  if (hasTimers) {
+    applyTimerList(state.timers);
+  }
 }
 
 function applyTimerList(list) {
@@ -217,6 +243,7 @@ function createTimerCard(timer, slotIndex) {
 
   if (isEditMode) {
     prepareDragHandle(card, dragHandle);
+    prepareCardDragArea(card);
   }
 
   const infoHeader = document.createElement('div');
@@ -356,6 +383,40 @@ function prepareDragHandle(card, dragHandle) {
 
   ['pointerup', 'pointercancel', 'pointerleave', 'mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => {
     dragHandle.addEventListener(eventName, clearReady);
+  });
+
+  card.addEventListener('dragend', clearReady);
+}
+
+function prepareCardDragArea(card) {
+  if (!card) {
+    return;
+  }
+
+  const markReady = (event) => {
+    if (!isEditMode) {
+      return;
+    }
+    if ((event.type === 'mousedown' || event.type === 'pointerdown') && event.button !== 0) {
+      return;
+    }
+    const interactive = event.target.closest('input, select, textarea, button, a, label');
+    if (interactive) {
+      return;
+    }
+    card.dataset.dragReady = 'true';
+  };
+
+  const clearReady = () => {
+    delete card.dataset.dragReady;
+  };
+
+  ['pointerdown', 'mousedown', 'touchstart'].forEach((eventName) => {
+    card.addEventListener(eventName, markReady);
+  });
+
+  ['pointerup', 'pointercancel', 'pointerleave', 'mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => {
+    card.addEventListener(eventName, clearReady);
   });
 
   card.addEventListener('dragend', clearReady);
@@ -735,7 +796,11 @@ async function fetchTimers() {
       throw new Error('타이머 정보를 불러올 수 없습니다.');
     }
     const data = await response.json();
-    applyTimerList(Array.isArray(data) ? data : []);
+    if (Array.isArray(data)) {
+      applyTimerList(data);
+    } else {
+      applyTimerState(data);
+    }
     updateStatus('실시간으로 연결되었습니다.');
   } catch (error) {
     console.error('Failed to fetch timers:', error);
@@ -813,8 +878,8 @@ async function toggleRepeat(id) {
 async function deleteTimer(id) {
   try {
     const response = await requestJson(`/api/timers/${id}`, { method: 'DELETE' });
-    if (Array.isArray(response?.timers)) {
-      applyTimerList(response.timers);
+    if (response) {
+      applyTimerState(response);
     } else {
       timers.delete(Number(id));
       renderTimers();
@@ -976,9 +1041,7 @@ function applySlotReorder(nextLayout) {
     body: JSON.stringify({ slots: normalizedLayout }),
   })
     .then((data) => {
-      if (Array.isArray(data?.timers)) {
-        applyTimerList(data.timers);
-      }
+      applyTimerState(data);
     })
     .catch(() => {
       fetchTimers();
@@ -1036,8 +1099,8 @@ function connectStream() {
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      applyTimerState(data);
       if (Array.isArray(data?.timers)) {
-        applyTimerList(data.timers);
         updateStatus('실시간으로 연결되었습니다.');
       }
     } catch (error) {

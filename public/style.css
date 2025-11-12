@@ -251,10 +251,35 @@ button:disabled {
   color: var(--primary);
 }
 
+#total-incentive {
+  color: var(--danger);
+}
+
 .totals-row {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.sale-field-display {
+  display: none;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.sale-price-display,
+.sale-net-display {
+  display: inline-block;
+  min-width: 80px;
+  text-align: right;
+}
+
+.sale-row-readonly .sale-field-display {
+  display: inline-block;
+}
+
+.sale-row-readonly .sale-field-input {
+  display: none !important;
 }
 
 .distribution-input {

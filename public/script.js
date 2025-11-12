@@ -78,27 +78,45 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
   itemInput.type = 'text';
   itemInput.value = rowData.item || '';
   itemInput.placeholder = rowData.placeholder || '';
+  itemInput.dataset.saleField = 'true';
+  itemInput.classList.add('sale-field-input');
   if (isReadOnly) {
     itemInput.disabled = true;
   }
+  const itemDisplay = document.createElement('span');
+  itemDisplay.className = 'sale-field-display';
   itemCell.appendChild(itemInput);
+  itemCell.appendChild(itemDisplay);
 
   const priceCell = document.createElement('td');
   const priceInput = document.createElement('input');
   priceInput.type = 'number';
   priceInput.min = '0';
   priceInput.step = 'any';
-  priceInput.placeholder = '0';
-  if (rowData.price !== undefined) {
-    priceInput.value = rowData.price;
+  priceInput.placeholder = '0 (만)';
+  priceInput.dataset.saleField = 'true';
+  priceInput.classList.add('sale-field-input', 'sale-price-input');
+  let initialPriceUnits = null;
+  if (rowData.priceUnits !== undefined) {
+    initialPriceUnits = toNumber(rowData.priceUnits, 0);
+  } else if (rowData.price !== undefined) {
+    initialPriceUnits = toNumber(rowData.price, 0) / 10000;
+  }
+  if (Number.isFinite(initialPriceUnits)) {
+    priceInput.value = String(initialPriceUnits);
   }
   if (isReadOnly) {
     priceInput.disabled = true;
   }
+  const priceDisplay = document.createElement('span');
+  priceDisplay.className = 'sale-field-display sale-price-display';
   priceCell.appendChild(priceInput);
+  priceCell.appendChild(priceDisplay);
 
   const methodCell = document.createElement('td');
   const methodSelect = document.createElement('select');
+  methodSelect.dataset.saleField = 'true';
+  methodSelect.classList.add('sale-field-input');
   saleOptions.forEach((option) => {
     const optionElement = document.createElement('option');
     optionElement.value = option.label;
@@ -116,27 +134,39 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
   if (isReadOnly) {
     methodSelect.disabled = true;
   }
+  const methodDisplay = document.createElement('span');
+  methodDisplay.className = 'sale-field-display';
   methodCell.appendChild(methodSelect);
+  methodCell.appendChild(methodDisplay);
 
   const netCell = document.createElement('td');
   const netInput = document.createElement('input');
   netInput.type = 'text';
   netInput.readOnly = true;
-  netInput.classList.add('net-amount');
+  netInput.classList.add('net-amount', 'sale-field-input');
+  netInput.dataset.saleField = 'true';
   netInput.value = '0';
   netInput.dataset.value = '0';
+  const netDisplay = document.createElement('span');
+  netDisplay.className = 'sale-field-display sale-net-display';
   netCell.appendChild(netInput);
+  netCell.appendChild(netDisplay);
 
   function updateRowValues() {
-    const price = parseFloat(priceInput.value) || 0;
+    const priceUnits = parseFloat(priceInput.value) || 0;
+    const price = priceUnits * 10000;
     const selectedOption = methodSelect.selectedOptions[0];
     const multiplier = selectedOption ? parseFloat(selectedOption.dataset.multiplier) || 0 : 0;
     const netValue = price * multiplier;
     netInput.value = formatCurrency(netValue);
     netInput.dataset.value = String(netValue);
+    syncSaleRowDisplay(row);
     updateTotals();
   }
 
+  itemInput.addEventListener('input', () => {
+    syncSaleRowDisplay(row);
+  });
   priceInput.addEventListener('input', updateRowValues);
   methodSelect.addEventListener('change', updateRowValues);
 
@@ -146,7 +176,44 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
   row.appendChild(netCell);
 
   tableBody.appendChild(row);
+  row.classList.toggle('sale-row-readonly', isReadOnly);
   updateRowValues();
+}
+
+function syncSaleRowDisplay(row) {
+  if (!row) {
+    return;
+  }
+  const itemInput = row.querySelector('td:nth-child(1) input');
+  const itemDisplay = row.querySelector('td:nth-child(1) .sale-field-display');
+  if (itemDisplay) {
+    const value = itemInput ? itemInput.value.trim() : '';
+    itemDisplay.textContent = value || '-';
+  }
+
+  const priceInput = row.querySelector('td:nth-child(2) input');
+  const priceDisplay = row.querySelector('td:nth-child(2) .sale-price-display');
+  if (priceDisplay) {
+    const units = priceInput ? parseFloat(priceInput.value) || 0 : 0;
+    const formattedUnits = units.toLocaleString('ko-KR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+    priceDisplay.textContent = `${formattedUnits}만`;
+  }
+
+  const methodSelect = row.querySelector('td:nth-child(3) select');
+  const methodDisplay = row.querySelector('td:nth-child(3) .sale-field-display');
+  if (methodDisplay) {
+    methodDisplay.textContent = methodSelect ? methodSelect.value || '-' : '-';
+  }
+
+  const netInput = row.querySelector('.net-amount');
+  const netDisplay = row.querySelector('.sale-net-display');
+  if (netDisplay) {
+    const netValue = netInput ? parseFloat(netInput.dataset.value) || 0 : 0;
+    netDisplay.textContent = formatCurrency(netValue);
+  }
 }
 
 function populateSaleTable(tableId, saleOptions, rowsData, fallbackRows = 0) {
@@ -162,6 +229,32 @@ function populateSaleTable(tableId, saleOptions, rowsData, fallbackRows = 0) {
   if (rows.length === 0) {
     updateTotals();
   }
+  applySaleTablesReadOnlyState();
+}
+
+function applySaleTablesReadOnlyState() {
+  ['drop-table', 'guest-table'].forEach((tableId) => {
+    const table = document.getElementById(tableId);
+    if (!table) {
+      return;
+    }
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      row.classList.toggle('sale-row-readonly', isReadOnly);
+      syncSaleRowDisplay(row);
+      row.querySelectorAll('.sale-field-input').forEach((element) => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) {
+          if (element.classList.contains('net-amount')) {
+            element.disabled = false;
+            if (element instanceof HTMLInputElement) {
+              element.readOnly = true;
+            }
+          } else {
+            element.disabled = isReadOnly;
+          }
+        }
+      });
+    });
+  });
 }
 
 function getSaleTableData(tableId, saleOptions) {
@@ -177,10 +270,13 @@ function getSaleTableData(tableId, saleOptions) {
 
     const method = methodSelect ? methodSelect.value : saleOptions[0].label;
     const multiplier = saleOptions.find((option) => option.label === method)?.multiplier ?? saleOptions[0].multiplier;
+    const priceUnits = priceInput ? toNumber(priceInput.value, 0) : 0;
+    const price = priceUnits * 10000;
 
     return {
       item: itemInput ? itemInput.value : '',
-      price: priceInput ? toNumber(priceInput.value, 0) : 0,
+      price,
+      priceUnits,
       method,
       multiplier,
       net: netInput ? toNumber(netInput.dataset.value, 0) : 0,
@@ -283,6 +379,11 @@ function updateTotals(distributionData = null) {
 }
 
 function createRateControls(member, rateCell, rateValue) {
+  if (isReadOnly) {
+    rateCell.textContent = `${Number(rateValue).toLocaleString('ko-KR')}%`;
+    return;
+  }
+
   const wrapper = document.createElement('div');
   wrapper.classList.add('input-with-controls');
 
@@ -381,35 +482,40 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
       createRateControls(member, rateCell, member.rate ?? 100);
 
-      const deductionInput = document.createElement('input');
-      deductionInput.type = 'number';
-      deductionInput.min = '0';
-      deductionInput.step = '0.1';
-      deductionInput.value = member.deduction ?? 0;
-      deductionInput.classList.add('distribution-input');
-      deductionInput.addEventListener('change', () => {
-        member.deduction = Math.max(0, toNumber(deductionInput.value, 0));
-        updateTotals();
-      });
       if (isReadOnly) {
-        deductionInput.disabled = true;
-      }
-      deductionCell.appendChild(deductionInput);
+        deductionCell.textContent = `${Number(member.deduction ?? 0).toLocaleString('ko-KR', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 2,
+        })}만`;
+        incentiveCell.textContent = `${Number(member.incentive ?? 0).toLocaleString('ko-KR', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 2,
+        })}만`;
+      } else {
+        const deductionInput = document.createElement('input');
+        deductionInput.type = 'number';
+        deductionInput.min = '0';
+        deductionInput.step = '0.1';
+        deductionInput.value = member.deduction ?? 0;
+        deductionInput.classList.add('distribution-input');
+        deductionInput.addEventListener('change', () => {
+          member.deduction = Math.max(0, toNumber(deductionInput.value, 0));
+          updateTotals();
+        });
+        deductionCell.appendChild(deductionInput);
 
-      const incentiveInput = document.createElement('input');
-      incentiveInput.type = 'number';
-      incentiveInput.min = '0';
-      incentiveInput.step = '0.1';
-      incentiveInput.value = member.incentive ?? 0;
-      incentiveInput.classList.add('distribution-input');
-      incentiveInput.addEventListener('change', () => {
-        member.incentive = Math.max(0, toNumber(incentiveInput.value, 0));
-        updateTotals();
-      });
-      if (isReadOnly) {
-        incentiveInput.disabled = true;
+        const incentiveInput = document.createElement('input');
+        incentiveInput.type = 'number';
+        incentiveInput.min = '0';
+        incentiveInput.step = '0.1';
+        incentiveInput.value = member.incentive ?? 0;
+        incentiveInput.classList.add('distribution-input');
+        incentiveInput.addEventListener('change', () => {
+          member.incentive = Math.max(0, toNumber(incentiveInput.value, 0));
+          updateTotals();
+        });
+        incentiveCell.appendChild(incentiveInput);
       }
-      incentiveCell.appendChild(incentiveInput);
 
       finalCell.textContent = formatCurrency(finalAmounts[i] ?? 0);
     } else {
@@ -617,6 +723,12 @@ function applyReadOnlyState() {
   editorPage.querySelectorAll('input, select').forEach((element) => {
     if (element.hasAttribute('data-lockable')) {
       element.disabled = isReadOnly;
+    } else if (element.dataset.saleField === 'true') {
+      if (element.classList.contains('net-amount')) {
+        element.disabled = false;
+      } else {
+        element.disabled = isReadOnly;
+      }
     } else if (element.closest('.modal-content')) {
       element.disabled = false;
     } else if (element.classList.contains('net-amount')) {
@@ -634,6 +746,7 @@ function applyReadOnlyState() {
 function setReadOnly(readOnly) {
   isReadOnly = readOnly;
   applyReadOnlyState();
+  applySaleTablesReadOnlyState();
   updateNavState();
 }
 
@@ -787,6 +900,7 @@ async function openDistribution(id, readOnly) {
     currentDistributionId = data.id;
     currentTitle = data.title;
     useBaseMembersForEditor = false;
+    setReadOnly(readOnly);
     populateFromDistributionData(data.data);
     showEditorView(readOnly);
     setPageTitle(currentTitle);
@@ -899,6 +1013,7 @@ function initTables() {
       const dropTableBody = document.querySelector('#drop-table tbody');
       if (dropTableBody) {
         createTableRow(dropTableBody, dropSaleOptions, {});
+        applySaleTablesReadOnlyState();
       }
     });
   }
@@ -909,6 +1024,7 @@ function initTables() {
       const guestTableBody = document.querySelector('#guest-table tbody');
       if (guestTableBody) {
         createTableRow(guestTableBody, guestSaleOptions, {});
+        applySaleTablesReadOnlyState();
       }
     });
   }
