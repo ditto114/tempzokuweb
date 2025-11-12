@@ -20,15 +20,8 @@ const DEFAULT_TIMER_DURATION_MS = 15 * 60 * 1000;
 const MIN_TIMER_DURATION_MS = 5 * 1000;
 const MAX_TIMER_DURATION_MS = 3 * 60 * 60 * 1000;
 
-const timerState = {
-  duration: DEFAULT_TIMER_DURATION_MS,
-  remaining: DEFAULT_TIMER_DURATION_MS,
-  isRunning: false,
-  endTime: null,
-  updatedAt: Date.now(),
-};
-
 const timerClients = new Set();
+const timers = new Map();
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -37,25 +30,39 @@ function clampTimerDuration(value) {
   return Math.min(Math.max(value, MIN_TIMER_DURATION_MS), MAX_TIMER_DURATION_MS);
 }
 
-function getRemainingTime(now = Date.now()) {
-  if (timerState.isRunning && typeof timerState.endTime === 'number') {
-    return Math.max(0, timerState.endTime - now);
+function getTimerRemaining(timer, now = Date.now()) {
+  if (!timer) {
+    return 0;
   }
-  return Math.max(0, timerState.remaining);
+  if (timer.isRunning && typeof timer.endTime === 'number') {
+    return Math.max(0, timer.endTime - now);
+  }
+  return Math.max(0, timer.remainingMs ?? 0);
 }
 
-function getTimerPayload(now = Date.now()) {
-  const remaining = getRemainingTime(now);
+function createTimerPayload(timer, now = Date.now()) {
+  const remaining = getTimerRemaining(timer, now);
   return {
-    duration: timerState.duration,
+    id: timer.id,
+    name: timer.name,
+    duration: timer.durationMs,
     remaining,
-    isRunning: timerState.isRunning,
-    endTime: timerState.isRunning ? timerState.endTime : null,
+    isRunning: timer.isRunning,
+    repeatEnabled: timer.repeatEnabled,
+    endTime: timer.isRunning ? timer.endTime : null,
     updatedAt: now,
   };
 }
 
-function broadcastTimerState(payload = getTimerPayload()) {
+function getTimersPayload(now = Date.now()) {
+  return {
+    timers: Array.from(timers.values())
+      .sort((a, b) => a.id - b.id)
+      .map((timer) => createTimerPayload(timer, now)),
+  };
+}
+
+function broadcastTimers(payload = getTimersPayload()) {
   const data = `data: ${JSON.stringify(payload)}\n\n`;
   for (const client of timerClients) {
     try {
@@ -66,8 +73,120 @@ function broadcastTimerState(payload = getTimerPayload()) {
   }
 }
 
-function sendTimerState(response, payload = getTimerPayload()) {
+function sendTimersState(response, payload = getTimersPayload()) {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function generateTimerName() {
+  const existingNames = new Set(Array.from(timers.values(), (timer) => timer.name));
+  let index = timers.size + 1;
+  while (existingNames.has(`타이머 ${index}`)) {
+    index += 1;
+  }
+  return `타이머 ${index}`;
+}
+
+async function persistTimer(timer) {
+  if (!timer || !pool) {
+    return;
+  }
+  const remainingMs = Math.max(0, Math.floor(timer.remainingMs ?? 0));
+  const endTime = typeof timer.endTime === 'number' ? Math.floor(timer.endTime) : null;
+  await pool.query(
+    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, end_time = ? WHERE id = ?`,
+    [
+      timer.name,
+      Math.floor(timer.durationMs),
+      remainingMs,
+      timer.isRunning ? 1 : 0,
+      timer.repeatEnabled ? 1 : 0,
+      endTime,
+      timer.id,
+    ],
+  );
+}
+
+async function createTimerInDatabase({ name, durationMs }) {
+  if (!pool) {
+    throw new Error('Database connection is not initialized.');
+  }
+  const [result] = await pool.query(
+    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time) VALUES (?, ?, ?, 0, 0, NULL)`,
+    [name, Math.floor(durationMs), Math.floor(durationMs)],
+  );
+  return result.insertId;
+}
+
+async function loadTimersFromDatabase() {
+  if (!pool) {
+    return;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time FROM timers ORDER BY id ASC`,
+  );
+
+  const now = Date.now();
+  timers.clear();
+  const updates = [];
+
+  for (const row of rows) {
+    const duration = clampTimerDuration(Number(row.duration_ms));
+    const endTime = row.end_time != null ? Number(row.end_time) : null;
+    const timer = {
+      id: row.id,
+      name: row.name || generateTimerName(),
+      durationMs: duration,
+      remainingMs: Math.max(0, Number(row.remaining_ms) || duration),
+      isRunning: Boolean(row.is_running),
+      repeatEnabled: Boolean(row.repeat_enabled),
+      endTime: typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null,
+      updatedAt: now,
+    };
+
+    if (timer.isRunning && typeof timer.endTime === 'number') {
+      const remaining = timer.endTime - now;
+      if (remaining <= 0) {
+        if (timer.repeatEnabled) {
+          timer.remainingMs = timer.durationMs;
+          timer.endTime = now + timer.durationMs;
+        } else {
+          timer.isRunning = false;
+          timer.remainingMs = 0;
+          timer.endTime = null;
+        }
+        timer.updatedAt = now;
+        updates.push(persistTimer(timer));
+      } else {
+        timer.remainingMs = remaining;
+      }
+    } else {
+      timer.isRunning = false;
+      timer.endTime = null;
+    }
+
+    timers.set(timer.id, timer);
+  }
+
+  if (timers.size === 0) {
+    const name = generateTimerName();
+    const duration = DEFAULT_TIMER_DURATION_MS;
+    const insertId = await createTimerInDatabase({ name, durationMs: duration });
+    timers.set(insertId, {
+      id: insertId,
+      name,
+      durationMs: duration,
+      remainingMs: duration,
+      isRunning: false,
+      repeatEnabled: false,
+      endTime: null,
+      updatedAt: now,
+    });
+  }
+
+  if (updates.length > 0) {
+    await Promise.allSettled(updates);
+  }
 }
 
 async function initializeDatabase() {
@@ -91,6 +210,19 @@ async function initializeDatabase() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS timers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      duration_ms INT NOT NULL,
+      remaining_ms INT NOT NULL,
+      is_running TINYINT(1) NOT NULL DEFAULT 0,
+      repeat_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      end_time BIGINT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
   await connection.end();
 
   pool = mysql.createPool({
@@ -100,6 +232,8 @@ async function initializeDatabase() {
     connectionLimit: 10,
     queueLimit: 0,
   });
+
+  await loadTimersFromDatabase();
 }
 
 app.use(express.json());
@@ -226,11 +360,19 @@ app.put('/api/distributions/:id', async (req, res) => {
   }
 });
 
-app.get('/api/timer', (req, res) => {
-  res.json(getTimerPayload());
+function getTimerById(id) {
+  const numericId = Number(id);
+  if (!Number.isInteger(numericId)) {
+    return null;
+  }
+  return timers.get(numericId) ?? null;
+}
+
+app.get('/api/timers', (req, res) => {
+  res.json(getTimersPayload().timers);
 });
 
-app.get('/api/timer/stream', (req, res) => {
+app.get('/api/timers/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -244,16 +386,81 @@ app.get('/api/timer/stream', (req, res) => {
 
   timerClients.add(res);
   res.write('retry: 5000\n\n');
-  sendTimerState(res);
+  sendTimersState(res);
 
   req.on('close', () => {
     timerClients.delete(res);
   });
 });
 
-app.post('/api/timer/start', (req, res) => {
-  if (timerState.isRunning) {
-    return res.json(getTimerPayload());
+app.post('/api/timers', async (req, res) => {
+  try {
+    const name = generateTimerName();
+    const duration = DEFAULT_TIMER_DURATION_MS;
+    const insertId = await createTimerInDatabase({ name, durationMs: duration });
+    const now = Date.now();
+    const timer = {
+      id: insertId,
+      name,
+      durationMs: duration,
+      remainingMs: duration,
+      isRunning: false,
+      repeatEnabled: false,
+      endTime: null,
+      updatedAt: now,
+    };
+    timers.set(insertId, timer);
+    const payload = createTimerPayload(timer, now);
+    broadcastTimers(getTimersPayload(now));
+    res.status(201).json(payload);
+  } catch (error) {
+    console.error('Error creating timer:', error);
+    res.status(500).json({ message: '타이머를 추가하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.put('/api/timers/:id', async (req, res) => {
+  const timer = getTimerById(req.params.id);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+  }
+
+  const { name, duration } = req.body ?? {};
+  const now = Date.now();
+
+  if (typeof name === 'string' && name.trim().length > 0) {
+    timer.name = name.trim();
+  }
+
+  if (Number.isFinite(duration) && duration > 0) {
+    const safeDuration = clampTimerDuration(duration);
+    timer.durationMs = safeDuration;
+    timer.remainingMs = safeDuration;
+    timer.isRunning = false;
+    timer.endTime = null;
+  }
+
+  timer.updatedAt = now;
+
+  try {
+    await persistTimer(timer);
+    const payload = createTimerPayload(timer, now);
+    broadcastTimers(getTimersPayload(now));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error updating timer:', error);
+    res.status(500).json({ message: '타이머를 수정하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/api/timers/:id/start', async (req, res) => {
+  const timer = getTimerById(req.params.id);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+  }
+
+  if (timer.isRunning) {
+    return res.json(createTimerPayload(timer));
   }
 
   const { duration } = req.body ?? {};
@@ -261,91 +468,136 @@ app.post('/api/timer/start', (req, res) => {
 
   if (Number.isFinite(duration) && duration > 0) {
     const safeDuration = clampTimerDuration(duration);
-    timerState.duration = safeDuration;
-    timerState.remaining = safeDuration;
-  } else if (getRemainingTime(now) <= 0) {
-    timerState.remaining = timerState.duration;
+    timer.durationMs = safeDuration;
+    timer.remainingMs = safeDuration;
   }
 
-  timerState.isRunning = true;
-  timerState.endTime = now + getRemainingTime(now);
-  timerState.updatedAt = now;
+  const remaining = getTimerRemaining(timer, now) || timer.durationMs;
+  timer.remainingMs = remaining <= 0 ? timer.durationMs : remaining;
+  timer.isRunning = true;
+  timer.endTime = now + timer.remainingMs;
+  timer.updatedAt = now;
 
-  const payload = getTimerPayload(now);
-  broadcastTimerState(payload);
-  res.json(payload);
+  try {
+    await persistTimer(timer);
+    const payload = createTimerPayload(timer, now);
+    broadcastTimers(getTimersPayload(now));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error starting timer:', error);
+    res.status(500).json({ message: '타이머를 시작하는 중 오류가 발생했습니다.' });
+  }
 });
 
-app.post('/api/timer/pause', (req, res) => {
-  if (!timerState.isRunning || typeof timerState.endTime !== 'number') {
-    return res.json(getTimerPayload());
+app.post('/api/timers/:id/pause', async (req, res) => {
+  const timer = getTimerById(req.params.id);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+  }
+
+  if (!timer.isRunning || typeof timer.endTime !== 'number') {
+    return res.json(createTimerPayload(timer));
   }
 
   const now = Date.now();
-  timerState.remaining = getRemainingTime(now);
-  timerState.isRunning = false;
-  timerState.endTime = null;
-  timerState.updatedAt = now;
+  timer.remainingMs = getTimerRemaining(timer, now);
+  timer.isRunning = false;
+  timer.endTime = null;
+  timer.updatedAt = now;
 
-  const payload = getTimerPayload(now);
-  broadcastTimerState(payload);
-  res.json(payload);
+  try {
+    await persistTimer(timer);
+    const payload = createTimerPayload(timer, now);
+    broadcastTimers(getTimersPayload(now));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error pausing timer:', error);
+    res.status(500).json({ message: '타이머를 일시정지하는 중 오류가 발생했습니다.' });
+  }
 });
 
-app.post('/api/timer/reset', (req, res) => {
-  const { duration } = req.body ?? {};
+app.post('/api/timers/:id/reset', async (req, res) => {
+  const timer = getTimerById(req.params.id);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+  }
+
   const now = Date.now();
+  timer.remainingMs = timer.durationMs;
+  timer.isRunning = false;
+  timer.endTime = null;
+  timer.updatedAt = now;
 
-  if (Number.isFinite(duration) && duration > 0) {
-    timerState.duration = clampTimerDuration(duration);
+  try {
+    await persistTimer(timer);
+    const payload = createTimerPayload(timer, now);
+    broadcastTimers(getTimersPayload(now));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error resetting timer:', error);
+    res.status(500).json({ message: '타이머를 초기화하는 중 오류가 발생했습니다.' });
   }
-
-  timerState.remaining = timerState.duration;
-  timerState.isRunning = false;
-  timerState.endTime = null;
-  timerState.updatedAt = now;
-
-  const payload = getTimerPayload(now);
-  broadcastTimerState(payload);
-  res.json(payload);
 });
 
-app.post('/api/timer/duration', (req, res) => {
-  const { duration } = req.body ?? {};
-  if (!Number.isFinite(duration) || duration <= 0) {
-    return res.status(400).json({ message: '유효한 시간을 1초 이상으로 입력해주세요.' });
+app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
+  const timer = getTimerById(req.params.id);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
 
-  const safeDuration = clampTimerDuration(duration);
-  const now = Date.now();
+  timer.repeatEnabled = !timer.repeatEnabled;
+  timer.updatedAt = Date.now();
 
-  timerState.duration = safeDuration;
-  timerState.remaining = safeDuration;
-  timerState.updatedAt = now;
-
-  if (timerState.isRunning) {
-    timerState.endTime = now + safeDuration;
-  } else {
-    timerState.endTime = null;
+  try {
+    await persistTimer(timer);
+    const payload = createTimerPayload(timer, timer.updatedAt);
+    broadcastTimers(getTimersPayload(timer.updatedAt));
+    res.json(payload);
+  } catch (error) {
+    console.error('Error toggling repeat mode:', error);
+    res.status(500).json({ message: '반복 설정을 변경하는 중 오류가 발생했습니다.' });
   }
-
-  const payload = getTimerPayload(now);
-  broadcastTimerState(payload);
-  res.json(payload);
 });
 
-setInterval(() => {
-  if (!timerState.isRunning || typeof timerState.endTime !== 'number') {
+setInterval(async () => {
+  if (timers.size === 0) {
     return;
   }
 
   const now = Date.now();
-  if (now >= timerState.endTime) {
-    timerState.isRunning = false;
-    timerState.remaining = 0;
-    timerState.endTime = null;
-    timerState.updatedAt = now;
-    broadcastTimerState(getTimerPayload(now));
+  let hasChanged = false;
+  const updateTasks = [];
+
+  for (const timer of timers.values()) {
+    if (!timer.isRunning || typeof timer.endTime !== 'number') {
+      continue;
+    }
+
+    const remaining = timer.endTime - now;
+    if (remaining > 0) {
+      continue;
+    }
+
+    if (timer.repeatEnabled) {
+      timer.remainingMs = timer.durationMs;
+      timer.endTime = now + timer.durationMs;
+      timer.updatedAt = now;
+      updateTasks.push(persistTimer(timer));
+    } else {
+      timer.isRunning = false;
+      timer.remainingMs = 0;
+      timer.endTime = null;
+      timer.updatedAt = now;
+      updateTasks.push(persistTimer(timer));
+    }
+    hasChanged = true;
+  }
+
+  if (hasChanged) {
+    if (updateTasks.length > 0) {
+      await Promise.allSettled(updateTasks);
+    }
+    broadcastTimers(getTimersPayload(now));
   }
 }, 250);
 

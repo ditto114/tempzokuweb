@@ -10,7 +10,7 @@
   <div class="container">
     <nav class="top-nav">
       <button id="nav-list" class="secondary">목록으로</button>
-      <button id="open-timer-modal" class="primary">혼테일 타이머</button>
+      <a href="/timers.html" class="primary">혼테일 타이머</a>
     </nav>
 
     <header>
@@ -152,42 +152,6 @@
         </div>
       </div>
     </main>
-  </div>
-
-  <div id="timer-modal-backdrop" class="modal-backdrop hidden"></div>
-  <div
-    id="timer-modal"
-    class="modal hidden"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="timer-modal-title"
-  >
-    <div class="modal-content timer-modal">
-      <div class="timer-modal-header">
-        <h3 id="timer-modal-title">혼테일 타이머</h3>
-        <button id="close-timer-modal" class="secondary mini-button" type="button">닫기</button>
-      </div>
-      <p class="timer-description">이 타이머는 페이지를 이용 중인 모든 사람과 실시간으로 공유됩니다.</p>
-      <div class="timer-display-wrapper">
-        <span id="timer-display">15:00</span>
-      </div>
-      <div class="timer-inputs">
-        <label class="timer-input">
-          <span>분</span>
-          <input id="timer-minute-input" type="number" min="0" max="180" value="15" />
-        </label>
-        <label class="timer-input">
-          <span>초</span>
-          <input id="timer-second-input" type="number" min="0" max="59" value="0" />
-        </label>
-        <button id="timer-apply" class="secondary" type="button">시간 적용</button>
-      </div>
-      <div class="timer-actions">
-        <button id="timer-start-stop" class="primary" type="button">시작</button>
-        <button id="timer-reset" class="secondary" type="button">초기화</button>
-      </div>
-      <div id="timer-status" class="timer-status" role="status" aria-live="polite">연결 상태 확인 중...</div>
-    </div>
   </div>
 
   <div id="modal-backdrop" class="modal-backdrop hidden"></div>
