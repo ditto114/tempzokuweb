@@ -9,10 +9,12 @@ const toggleEditButton = document.getElementById('toggle-edit-mode');
 
 const timers = new Map();
 const timerDisplays = new Map();
+const timerProgressBars = new Map();
 
 let eventSource = null;
 let isEditMode = false;
 let editingTimerId = null;
+let draggedTimerId = null;
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -63,19 +65,28 @@ function normalizeTimer(raw) {
     remainingMs: remaining,
     isRunning: Boolean(raw.isRunning),
     repeatEnabled: Boolean(raw.repeatEnabled),
+    displayOrder: Number.isFinite(raw.displayOrder) ? Number(raw.displayOrder) : Number(raw.id),
     endTime: Number.isFinite(endTime) ? endTime : null,
     updatedAt: raw.updatedAt != null ? Number(raw.updatedAt) : Date.now(),
   };
 }
 
+function sortTimersForDisplay(values = Array.from(timers.values())) {
+  return values.sort((a, b) => {
+    const orderA = Number.isFinite(a.displayOrder) ? a.displayOrder : a.id;
+    const orderB = Number.isFinite(b.displayOrder) ? b.displayOrder : b.id;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    return a.id - b.id;
+  });
+}
+
 function applyTimerList(list) {
   timers.clear();
-  list
-    .map((item) => normalizeTimer(item))
-    .sort((a, b) => a.id - b.id)
-    .forEach((timer) => {
-      timers.set(timer.id, timer);
-    });
+  sortTimersForDisplay(list.map((item) => normalizeTimer(item))).forEach((timer) => {
+    timers.set(timer.id, timer);
+  });
   renderTimers();
 }
 
@@ -87,15 +98,30 @@ function applyTimerUpdate(timerData) {
 
 function clearTimerDisplays() {
   timerDisplays.clear();
+  timerProgressBars.clear();
 }
 
 function createTimerCard(timer) {
   const card = document.createElement('article');
   card.className = 'timer-card';
   card.dataset.timerId = String(timer.id);
+  if (isEditMode) {
+    card.classList.add('is-editing');
+    card.setAttribute('draggable', 'true');
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('dragleave', handleDragLeave);
+    card.addEventListener('drop', handleDrop);
+    card.addEventListener('dragend', handleDragEnd);
+  }
 
   const info = document.createElement('div');
   info.className = 'timer-card-info';
+
+  const dragHandle = document.createElement('div');
+  dragHandle.className = 'timer-card-drag-handle';
+  dragHandle.setAttribute('aria-hidden', 'true');
+  info.appendChild(dragHandle);
 
   const infoHeader = document.createElement('div');
   infoHeader.className = 'timer-card-info-header';
@@ -122,18 +148,25 @@ function createTimerCard(timer) {
   display.textContent = formatTimerDisplay(remaining);
   if (!timer.isRunning && remaining === 0) {
     display.classList.add('finished');
+  } else if (remaining > 0 && remaining <= 60 * 1000) {
+    display.classList.add('critical');
   }
   timerDisplays.set(timer.id, display);
 
   const secondaryActions = document.createElement('div');
   secondaryActions.className = 'timer-card-secondary-actions';
 
-  const resetButton = document.createElement('button');
-  resetButton.type = 'button';
-  resetButton.className = 'tertiary';
-  resetButton.textContent = '초기화';
-  resetButton.addEventListener('click', () => resetTimer(timer.id));
-  secondaryActions.appendChild(resetButton);
+  const auxButton = document.createElement('button');
+  auxButton.type = 'button';
+  auxButton.className = 'tertiary';
+  if (timer.isRunning) {
+    auxButton.textContent = '일시정지';
+    auxButton.addEventListener('click', () => pauseTimer(timer.id));
+  } else {
+    auxButton.textContent = '초기화';
+    auxButton.addEventListener('click', () => resetTimer(timer.id));
+  }
+  secondaryActions.appendChild(auxButton);
 
   info.appendChild(infoHeader);
   info.appendChild(display);
@@ -142,6 +175,19 @@ function createTimerCard(timer) {
   if (isEditMode && editingTimerId === timer.id) {
     info.appendChild(createEditPanel(timer));
   }
+
+  const progress = document.createElement('div');
+  progress.className = 'timer-progress';
+  const progressInner = document.createElement('div');
+  progressInner.className = 'timer-progress-bar';
+  const durationMs = Math.max(timer.durationMs, 1);
+  const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
+  progressInner.style.width = `${progressRatio * 100}%`;
+  if (remaining > 0 && remaining <= 60 * 1000) {
+    progressInner.classList.add('critical');
+  }
+  progress.appendChild(progressInner);
+  timerProgressBars.set(timer.id, progressInner);
 
   const actionButton = document.createElement('button');
   actionButton.type = 'button';
@@ -152,11 +198,11 @@ function createTimerCard(timer) {
     actionButton.textContent = '수정';
     actionButton.addEventListener('click', () => openEditPanel(timer.id));
   } else {
-    actionButton.classList.add('primary');
-    actionButton.textContent = timer.isRunning ? '일시정지' : '시작';
+    actionButton.classList.add(timer.isRunning ? 'danger' : 'primary');
+    actionButton.textContent = timer.isRunning ? '리셋' : '시작';
     actionButton.addEventListener('click', () => {
       if (timer.isRunning) {
-        pauseTimer(timer.id);
+        resetTimer(timer.id);
       } else {
         startTimer(timer.id);
       }
@@ -164,6 +210,7 @@ function createTimerCard(timer) {
   }
 
   card.appendChild(info);
+  card.appendChild(progress);
   card.appendChild(actionButton);
 
   return card;
@@ -262,7 +309,7 @@ function renderTimers() {
   timerListElement.innerHTML = '';
 
   const fragment = document.createDocumentFragment();
-  const sortedTimers = Array.from(timers.values()).sort((a, b) => a.id - b.id);
+  const sortedTimers = sortTimersForDisplay();
 
   if (sortedTimers.length === 0) {
     const emptyMessage = document.createElement('p');
@@ -288,10 +335,29 @@ function updateTimerDisplays() {
     }
     const remaining = getTimerRemaining(timer, now);
     element.textContent = formatTimerDisplay(remaining);
-    if (!timer.isRunning && remaining === 0) {
+    const isFinished = !timer.isRunning && remaining === 0;
+    if (isFinished) {
       element.classList.add('finished');
+      element.classList.remove('critical');
     } else {
       element.classList.remove('finished');
+      if (remaining > 0 && remaining <= 60 * 1000) {
+        element.classList.add('critical');
+      } else {
+        element.classList.remove('critical');
+      }
+    }
+
+    const progressElement = timerProgressBars.get(id);
+    if (progressElement) {
+      const duration = Math.max(timer.durationMs, 1);
+      const ratio = Math.max(0, Math.min(1, remaining / duration));
+      progressElement.style.width = `${ratio * 100}%`;
+      if (!isFinished && remaining > 0 && remaining <= 60 * 1000) {
+        progressElement.classList.add('critical');
+      } else {
+        progressElement.classList.remove('critical');
+      }
     }
   });
 }
@@ -401,11 +467,142 @@ function toggleEditMode() {
   isEditMode = !isEditMode;
   if (!isEditMode) {
     editingTimerId = null;
+    draggedTimerId = null;
   }
   if (toggleEditButton) {
     toggleEditButton.textContent = isEditMode ? '수정 완료' : '수정';
   }
+  clearDropIndicators();
   renderTimers();
+}
+
+function clearDropIndicators() {
+  if (!timerListElement) {
+    return;
+  }
+  timerListElement.querySelectorAll('.timer-card').forEach((card) => {
+    card.classList.remove('dragging', 'drop-target', 'drop-target-before', 'drop-target-after');
+  });
+}
+
+function handleDragStart(event) {
+  if (!isEditMode || !event.currentTarget) {
+    event.preventDefault();
+    return;
+  }
+  if (!event.target || !event.target.closest('.timer-card-drag-handle')) {
+    event.preventDefault();
+    return;
+  }
+  const card = event.currentTarget;
+  const timerId = Number(card.dataset.timerId);
+  if (!Number.isInteger(timerId)) {
+    event.preventDefault();
+    return;
+  }
+  draggedTimerId = timerId;
+  card.classList.add('dragging');
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(timerId));
+  }
+}
+
+function handleDragOver(event) {
+  if (!isEditMode || draggedTimerId == null || !event.currentTarget) {
+    return;
+  }
+  const card = event.currentTarget;
+  const targetId = Number(card.dataset.timerId);
+  if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move';
+  }
+  const rect = card.getBoundingClientRect();
+  const isAfter = event.clientY - rect.top > rect.height / 2;
+  card.classList.add('drop-target');
+  card.classList.toggle('drop-target-after', isAfter);
+  card.classList.toggle('drop-target-before', !isAfter);
+}
+
+function handleDragLeave(event) {
+  if (!event.currentTarget) {
+    return;
+  }
+  const card = event.currentTarget;
+  card.classList.remove('drop-target', 'drop-target-before', 'drop-target-after');
+}
+
+function performLocalReorder(sourceId, targetId, insertAfter) {
+  const sortedTimers = sortTimersForDisplay();
+  const order = sortedTimers.map((timer) => timer.id);
+  const fromIndex = order.indexOf(sourceId);
+  if (fromIndex === -1) {
+    return;
+  }
+  const [movedId] = order.splice(fromIndex, 1);
+  let targetIndex = order.indexOf(targetId);
+  if (targetIndex === -1) {
+    return;
+  }
+  if (insertAfter) {
+    targetIndex += 1;
+  }
+  order.splice(targetIndex, 0, movedId);
+
+  const hasChanged = order.some((id, index) => id !== sortedTimers[index]?.id);
+  if (!hasChanged) {
+    return;
+  }
+
+  order.forEach((id, index) => {
+    const timer = timers.get(id);
+    if (timer) {
+      timer.displayOrder = index;
+    }
+  });
+  renderTimers();
+
+  requestJson('/api/timers/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ order }),
+  })
+    .then((data) => {
+      if (Array.isArray(data?.timers)) {
+        applyTimerList(data.timers);
+      }
+    })
+    .catch(() => {
+      fetchTimers();
+    });
+}
+
+function handleDrop(event) {
+  if (!isEditMode || draggedTimerId == null || !event.currentTarget) {
+    return;
+  }
+  event.preventDefault();
+  const card = event.currentTarget;
+  const targetId = Number(card.dataset.timerId);
+  if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
+    clearDropIndicators();
+    return;
+  }
+  const rect = card.getBoundingClientRect();
+  const insertAfter = event.clientY - rect.top > rect.height / 2;
+  clearDropIndicators();
+  performLocalReorder(draggedTimerId, targetId, insertAfter);
+}
+
+function handleDragEnd(event) {
+  if (event.currentTarget) {
+    event.currentTarget.classList.remove('dragging');
+  }
+  clearDropIndicators();
+  draggedTimerId = null;
 }
 
 function connectStream() {
