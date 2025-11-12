@@ -23,6 +23,10 @@ const MAX_TIMER_DURATION_MS = 3 * 60 * 60 * 1000;
 const timerClients = new Set();
 const timers = new Map();
 
+const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
+const GRID_SETTINGS_RANGE = Object.freeze({ min: 1, max: 6 });
+let timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
     return DEFAULT_TIMER_DURATION_MS;
@@ -55,6 +59,29 @@ function createTimerPayload(timer, now = Date.now()) {
   };
 }
 
+function clampGridValue(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(
+    GRID_SETTINGS_RANGE.min,
+    Math.min(GRID_SETTINGS_RANGE.max, Math.floor(numeric)),
+  );
+}
+
+function normalizeGridSettings(raw = {}) {
+  const columns = clampGridValue(
+    raw.columns ?? DEFAULT_GRID_SETTINGS.columns,
+    DEFAULT_GRID_SETTINGS.columns,
+  );
+  const rows = clampGridValue(
+    raw.rows ?? DEFAULT_GRID_SETTINGS.rows,
+    DEFAULT_GRID_SETTINGS.rows,
+  );
+  return { columns, rows };
+}
+
 function getTimersPayload(now = Date.now()) {
   return {
     timers: Array.from(timers.values())
@@ -67,6 +94,7 @@ function getTimersPayload(now = Date.now()) {
         return a.id - b.id;
       })
       .map((timer) => createTimerPayload(timer, now)),
+    gridSettings: normalizeGridSettings(timerGridSettings),
   };
 }
 
@@ -267,6 +295,13 @@ async function initializeDatabase() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS timer_settings (
+      name VARCHAR(100) PRIMARY KEY,
+      value JSON NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
   const [displayOrderColumn] = await connection.query(
     "SHOW COLUMNS FROM timers LIKE 'display_order'",
   );
@@ -275,9 +310,34 @@ async function initializeDatabase() {
       'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
     );
   }
-  await connection.query(
-    'UPDATE timers SET display_order = id WHERE display_order IS NULL OR display_order = 0',
-  );
+
+  try {
+    const [settingsRows] = await connection.query(
+      'SELECT value FROM timer_settings WHERE name = ? LIMIT 1',
+      ['grid'],
+    );
+    if (Array.isArray(settingsRows) && settingsRows.length > 0) {
+      const storedValue = settingsRows[0].value;
+      let parsedValue = storedValue;
+      if (typeof storedValue === 'string') {
+        try {
+          parsedValue = JSON.parse(storedValue);
+        } catch (parseError) {
+          parsedValue = DEFAULT_GRID_SETTINGS;
+        }
+      }
+      timerGridSettings = normalizeGridSettings(parsedValue);
+    } else {
+      timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+      await connection.query(
+        'INSERT INTO timer_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        ['grid', JSON.stringify(timerGridSettings)],
+      );
+    }
+  } catch (error) {
+    console.error('Failed to load timer grid settings:', error);
+    timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+  }
   await connection.end();
 
   pool = mysql.createPool({
@@ -424,7 +484,7 @@ function getTimerById(id) {
 }
 
 app.get('/api/timers', (req, res) => {
-  res.json(getTimersPayload().timers);
+  res.json(getTimersPayload());
 });
 
 app.get('/api/timers/stream', (req, res) => {
@@ -718,6 +778,35 @@ app.post('/api/timers/reorder', async (req, res) => {
   const payload = getTimersPayload(now);
   broadcastTimers(payload);
   res.json(payload);
+});
+
+app.get('/api/timers/grid-settings', (req, res) => {
+  res.json({ gridSettings: normalizeGridSettings(timerGridSettings) });
+});
+
+app.post('/api/timers/grid-settings', async (req, res) => {
+  const nextSettings = normalizeGridSettings(req.body ?? {});
+  const hasChanged =
+    nextSettings.columns !== timerGridSettings.columns ||
+    nextSettings.rows !== timerGridSettings.rows;
+
+  timerGridSettings = nextSettings;
+
+  try {
+    await pool.query(
+      'INSERT INTO timer_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+      ['grid', JSON.stringify(timerGridSettings)],
+    );
+  } catch (error) {
+    console.error('Failed to persist timer grid settings:', error);
+    return res.status(500).json({ message: '타이머 그리드 설정을 저장하는 중 오류가 발생했습니다.' });
+  }
+
+  if (hasChanged) {
+    broadcastTimers(getTimersPayload());
+  }
+
+  res.json({ gridSettings: normalizeGridSettings(timerGridSettings) });
 });
 
 setInterval(async () => {
