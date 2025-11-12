@@ -128,6 +128,37 @@ async function createTimerInDatabase({ name, durationMs }) {
   return { id: result.insertId, displayOrder: nextOrder };
 }
 
+async function deleteTimerFromDatabase(id) {
+  if (!pool) {
+    throw new Error('Database connection is not initialized.');
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.query('SELECT display_order FROM timers WHERE id = ?', [id]);
+    if (!Array.isArray(rows) || rows.length === 0) {
+      await connection.rollback();
+      return null;
+    }
+
+    const displayOrder = Number(rows[0].display_order ?? 0);
+    await connection.query('DELETE FROM timers WHERE id = ?', [id]);
+    await connection.query('UPDATE timers SET display_order = display_order - 1 WHERE display_order > ?', [displayOrder]);
+    await connection.commit();
+    return displayOrder;
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      console.error('Failed to rollback timer deletion:', rollbackError);
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 async function loadTimersFromDatabase() {
   if (!pool) {
     return;
@@ -582,6 +613,42 @@ app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
   } catch (error) {
     console.error('Error toggling repeat mode:', error);
     res.status(500).json({ message: '반복 설정을 변경하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.delete('/api/timers/:id', async (req, res) => {
+  const timerId = Number(req.params.id);
+  if (!Number.isInteger(timerId)) {
+    return res.status(400).json({ message: '잘못된 타이머 ID입니다.' });
+  }
+
+  const timer = getTimerById(timerId);
+  if (!timer) {
+    return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+  }
+
+  try {
+    const removedOrder = await deleteTimerFromDatabase(timerId);
+    if (removedOrder == null) {
+      return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+    }
+
+    timers.delete(timerId);
+    const now = Date.now();
+    for (const otherTimer of timers.values()) {
+      const currentOrder = Number.isFinite(otherTimer.displayOrder) ? otherTimer.displayOrder : 0;
+      if (currentOrder > removedOrder) {
+        otherTimer.displayOrder = currentOrder - 1;
+        otherTimer.updatedAt = now;
+      }
+    }
+
+    const payload = getTimersPayload(now);
+    broadcastTimers(payload);
+    res.json(payload);
+  } catch (error) {
+    console.error('Error deleting timer:', error);
+    res.status(500).json({ message: '타이머를 삭제하는 중 오류가 발생했습니다.' });
   }
 });
 
