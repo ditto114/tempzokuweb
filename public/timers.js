@@ -196,10 +196,6 @@ function createTimerCard(timer) {
   info.appendChild(infoHeader);
   info.appendChild(display);
 
-  if (!isEditMode && timer.isRunning) {
-    info.appendChild(createResetSlider(timer));
-  }
-
   const progress = document.createElement('div');
   progress.className = 'timer-progress';
   const progressInner = document.createElement('div');
@@ -213,27 +209,33 @@ function createTimerCard(timer) {
   progress.appendChild(progressInner);
   timerProgressBars.set(timer.id, progressInner);
 
-  const actionButton = document.createElement('button');
-  actionButton.type = 'button';
-  actionButton.className = 'timer-card-action';
-
+  let actionElement = null;
   if (isEditMode) {
-    actionButton.classList.add('danger');
-    actionButton.textContent = '삭제';
-    actionButton.addEventListener('click', () => deleteTimer(timer.id));
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'timer-card-action danger';
+    deleteButton.textContent = '삭제';
+    deleteButton.addEventListener('click', () => deleteTimer(timer.id));
+    actionElement = deleteButton;
   } else if (timer.isRunning) {
-    actionButton.classList.add('secondary');
-    actionButton.textContent = '일시정지';
-    actionButton.addEventListener('click', () => pauseTimer(timer.id));
+    const resetContainer = document.createElement('div');
+    resetContainer.className = 'timer-card-action timer-card-reset-area';
+    resetContainer.appendChild(createResetSlider(timer));
+    actionElement = resetContainer;
   } else {
-    actionButton.classList.add('primary');
-    actionButton.textContent = '시작';
-    actionButton.addEventListener('click', () => startTimer(timer.id));
+    const startButton = document.createElement('button');
+    startButton.type = 'button';
+    startButton.className = 'timer-card-action primary';
+    startButton.textContent = '시작';
+    startButton.addEventListener('click', () => startTimer(timer.id));
+    actionElement = startButton;
   }
 
   card.appendChild(info);
   card.appendChild(progress);
-  card.appendChild(actionButton);
+  if (actionElement) {
+    card.appendChild(actionElement);
+  }
 
   return card;
 }
@@ -493,6 +495,9 @@ function renderTimers() {
     const emptyMessage = document.createElement('p');
     emptyMessage.className = 'timer-empty';
     emptyMessage.textContent = '등록된 타이머가 없습니다. 추가 버튼을 눌러 타이머를 만들어주세요.';
+    if (isEditMode) {
+      emptyMessage.classList.add('timer-empty--editing');
+    }
     fragment.appendChild(emptyMessage);
   } else {
     sortedTimers.forEach((timer) => {
@@ -500,8 +505,59 @@ function renderTimers() {
     });
   }
 
+  if (isEditMode) {
+    appendDropSlots(fragment, sortedTimers.length);
+  }
+
   timerListElement.appendChild(fragment);
   updateTimerDisplays();
+}
+
+function appendDropSlots(fragment, timerCount) {
+  if (!timerListElement) {
+    return;
+  }
+
+  const columnCount = Math.max(1, getGridColumnCount(timerListElement));
+  const remainder = timerCount % columnCount;
+  const baseSlots = columnCount;
+  const extraSlots = remainder === 0 ? baseSlots : columnCount - remainder;
+  const totalSlots = timerCount === 0 ? baseSlots : extraSlots;
+
+  for (let index = 0; index < totalSlots; index += 1) {
+    fragment.appendChild(createDropSlot(timerCount + index));
+  }
+}
+
+function getGridColumnCount(element) {
+  if (!element) {
+    return 0;
+  }
+  const template = window.getComputedStyle(element).gridTemplateColumns || '';
+  const repeatMatch = template.match(/repeat\((\d+)/);
+  if (repeatMatch) {
+    return Number.parseInt(repeatMatch[1], 10) || 0;
+  }
+  const minmaxMatches = template.match(/minmax\(/g);
+  if (minmaxMatches && minmaxMatches.length > 0) {
+    return minmaxMatches.length;
+  }
+  const parts = template.trim().split(/\s+/).filter(Boolean);
+  return parts.length;
+}
+
+function createDropSlot(index) {
+  const slot = document.createElement('div');
+  slot.className = 'timer-drop-slot';
+  slot.dataset.dropIndex = String(index);
+  slot.addEventListener('dragover', handleDragOver);
+  slot.addEventListener('dragleave', handleDragLeave);
+  slot.addEventListener('drop', handleDrop);
+  const label = document.createElement('span');
+  label.className = 'timer-drop-slot-label';
+  label.textContent = '여기에 놓기';
+  slot.appendChild(label);
+  return slot;
 }
 
 function updateTimerDisplays() {
@@ -604,15 +660,6 @@ async function startTimer(id) {
   }
 }
 
-async function pauseTimer(id) {
-  try {
-    const timer = await requestJson(`/api/timers/${id}/pause`, { method: 'POST' });
-    applyTimerUpdate(timer);
-  } catch (error) {
-    // 상태 메시지 출력됨
-  }
-}
-
 async function resetTimer(id) {
   try {
     const timer = await requestJson(`/api/timers/${id}/reset`, { method: 'POST' });
@@ -661,8 +708,8 @@ function clearDropIndicators() {
   if (!timerListElement) {
     return;
   }
-  timerListElement.querySelectorAll('.timer-card').forEach((card) => {
-    card.classList.remove('dragging', 'drop-target', 'drop-target-before', 'drop-target-after');
+  timerListElement.querySelectorAll('.timer-card, .timer-drop-slot').forEach((element) => {
+    element.classList.remove('dragging', 'drop-target', 'drop-target-before', 'drop-target-after');
   });
 }
 
@@ -695,6 +742,14 @@ function handleDragOver(event) {
     return;
   }
   const card = event.currentTarget;
+  if (card.classList.contains('timer-drop-slot')) {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+    card.classList.add('drop-target');
+    return;
+  }
   const targetId = Number(card.dataset.timerId);
   if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
     return;
@@ -762,12 +817,60 @@ function performLocalReorder(sourceId, targetId, insertAfter) {
     });
 }
 
+function performLocalReorderToIndex(sourceId, targetIndex) {
+  const sortedTimers = sortTimersForDisplay();
+  const order = sortedTimers.map((timer) => timer.id);
+  const fromIndex = order.indexOf(sourceId);
+  if (fromIndex === -1) {
+    return;
+  }
+
+  const [movedId] = order.splice(fromIndex, 1);
+  const desiredIndexRaw = Number(targetIndex);
+  const desiredIndex = Number.isFinite(desiredIndexRaw) ? desiredIndexRaw : order.length;
+  const clampedIndex = Math.max(0, Math.min(desiredIndex, order.length));
+  order.splice(clampedIndex, 0, movedId);
+
+  const hasChanged = order.some((id, index) => id !== sortedTimers[index]?.id);
+  if (!hasChanged) {
+    return;
+  }
+
+  order.forEach((id, index) => {
+    const timer = timers.get(id);
+    if (timer) {
+      timer.displayOrder = index;
+    }
+  });
+
+  renderTimers();
+
+  requestJson('/api/timers/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ order }),
+  })
+    .then((data) => {
+      if (Array.isArray(data?.timers)) {
+        applyTimerList(data.timers);
+      }
+    })
+    .catch(() => {
+      fetchTimers();
+    });
+}
+
 function handleDrop(event) {
   if (!isEditMode || draggedTimerId == null || !event.currentTarget) {
     return;
   }
   event.preventDefault();
   const card = event.currentTarget;
+  if (card.classList.contains('timer-drop-slot')) {
+    const dropIndex = Number(card.dataset.dropIndex);
+    clearDropIndicators();
+    performLocalReorderToIndex(draggedTimerId, dropIndex);
+    return;
+  }
   const targetId = Number(card.dataset.timerId);
   if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
     clearDropIndicators();

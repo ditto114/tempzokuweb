@@ -516,6 +516,14 @@ button:disabled {
   color: #ffffff;
 }
 
+.timer-card-reset-area {
+  padding: 8px 16px;
+}
+
+.timer-card-reset-area .timer-reset-slider {
+  width: 100%;
+}
+
 .timer-card-display-editable {
   gap: 12px;
 }
@@ -658,14 +666,17 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 10px;
+  padding: 0 16px;
+  height: 40px;
   background: #eef2ff;
   border-radius: 999px;
   overflow: hidden;
   touch-action: none;
   user-select: none;
   isolation: isolate;
+  box-sizing: border-box;
+  width: 100%;
   --slider-progress: 0;
 }
 
@@ -698,17 +709,17 @@ button:disabled {
 
 .timer-reset-knob {
   position: absolute;
-  left: 8px;
+  left: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: none;
   background: var(--primary);
   color: #ffffff;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   cursor: grab;
   box-shadow: 0 6px 14px rgba(74, 108, 247, 0.25);
   transition: box-shadow 0.2s ease, transform 0.2s ease;
@@ -724,6 +735,34 @@ button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+.timer-drop-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  border: 2px dashed rgba(74, 108, 247, 0.25);
+  border-radius: 16px;
+  background: rgba(238, 242, 255, 0.4);
+  color: var(--secondary);
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.timer-drop-slot.drop-target {
+  border-color: rgba(74, 108, 247, 0.65);
+  background: rgba(74, 108, 247, 0.12);
+  color: var(--primary);
+}
+
+.timer-drop-slot-label {
+  pointer-events: none;
+}
+
+.timer-empty--editing {
+  border: 2px dashed rgba(74, 108, 247, 0.35);
 }
 
 .timer-progress {
