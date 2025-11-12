@@ -669,13 +669,25 @@ button:disabled {
 }
 
 .timer-card-drag-handle {
+  position: relative;
   display: none;
   width: 72px;
   height: 8px;
+  margin: -12px auto 6px;
+  padding-top: 12px;
+  touch-action: none;
+}
+
+.timer-card-drag-handle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  height: 8px;
   border-radius: 999px;
   background: linear-gradient(90deg, #d1d5db 0%, #cbd5f5 50%, #d1d5db 100%);
-  margin: 0 auto 6px;
-  touch-action: none;
+  pointer-events: none;
 }
 
 .timer-card.is-editing .timer-card-drag-handle {
