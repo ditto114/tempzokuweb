@@ -49,6 +49,7 @@ function createTimerPayload(timer, now = Date.now()) {
     remaining,
     isRunning: timer.isRunning,
     repeatEnabled: timer.repeatEnabled,
+    displayOrder: timer.displayOrder ?? timer.id,
     endTime: timer.isRunning ? timer.endTime : null,
     updatedAt: now,
   };
@@ -57,7 +58,14 @@ function createTimerPayload(timer, now = Date.now()) {
 function getTimersPayload(now = Date.now()) {
   return {
     timers: Array.from(timers.values())
-      .sort((a, b) => a.id - b.id)
+      .sort((a, b) => {
+        const orderA = Number.isFinite(a.displayOrder) ? a.displayOrder : a.id;
+        const orderB = Number.isFinite(b.displayOrder) ? b.displayOrder : b.id;
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        return a.id - b.id;
+      })
       .map((timer) => createTimerPayload(timer, now)),
   };
 }
@@ -93,7 +101,7 @@ async function persistTimer(timer) {
   const remainingMs = Math.max(0, Math.floor(timer.remainingMs ?? 0));
   const endTime = typeof timer.endTime === 'number' ? Math.floor(timer.endTime) : null;
   await pool.query(
-    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, end_time = ? WHERE id = ?`,
+    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, end_time = ?, display_order = ? WHERE id = ?`,
     [
       timer.name,
       Math.floor(timer.durationMs),
@@ -101,6 +109,7 @@ async function persistTimer(timer) {
       timer.isRunning ? 1 : 0,
       timer.repeatEnabled ? 1 : 0,
       endTime,
+      timer.displayOrder ?? 0,
       timer.id,
     ],
   );
@@ -110,11 +119,13 @@ async function createTimerInDatabase({ name, durationMs }) {
   if (!pool) {
     throw new Error('Database connection is not initialized.');
   }
+  const [rows] = await pool.query('SELECT COALESCE(MAX(display_order), -1) AS maxOrder FROM timers');
+  const nextOrder = Number(rows?.[0]?.maxOrder ?? -1) + 1;
   const [result] = await pool.query(
-    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time) VALUES (?, ?, ?, 0, 0, NULL)`,
-    [name, Math.floor(durationMs), Math.floor(durationMs)],
+    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time, display_order) VALUES (?, ?, ?, 0, 0, NULL, ?)`,
+    [name, Math.floor(durationMs), Math.floor(durationMs), nextOrder],
   );
-  return result.insertId;
+  return { id: result.insertId, displayOrder: nextOrder };
 }
 
 async function loadTimersFromDatabase() {
@@ -123,7 +134,7 @@ async function loadTimersFromDatabase() {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time FROM timers ORDER BY id ASC`,
+    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time, display_order FROM timers ORDER BY display_order ASC, id ASC`,
   );
 
   const now = Date.now();
@@ -140,6 +151,7 @@ async function loadTimersFromDatabase() {
       remainingMs: Math.max(0, Number(row.remaining_ms) || duration),
       isRunning: Boolean(row.is_running),
       repeatEnabled: Boolean(row.repeat_enabled),
+      displayOrder: Number.isFinite(row.display_order) ? Number(row.display_order) : row.id,
       endTime: typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null,
       updatedAt: now,
     };
@@ -171,7 +183,7 @@ async function loadTimersFromDatabase() {
   if (timers.size === 0) {
     const name = generateTimerName();
     const duration = DEFAULT_TIMER_DURATION_MS;
-    const insertId = await createTimerInDatabase({ name, durationMs: duration });
+    const { id: insertId, displayOrder } = await createTimerInDatabase({ name, durationMs: duration });
     timers.set(insertId, {
       id: insertId,
       name,
@@ -179,6 +191,7 @@ async function loadTimersFromDatabase() {
       remainingMs: duration,
       isRunning: false,
       repeatEnabled: false,
+      displayOrder,
       endTime: null,
       updatedAt: now,
     });
@@ -218,11 +231,23 @@ async function initializeDatabase() {
       remaining_ms INT NOT NULL,
       is_running TINYINT(1) NOT NULL DEFAULT 0,
       repeat_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      display_order INT NOT NULL DEFAULT 0,
       end_time BIGINT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+  const [displayOrderColumn] = await connection.query(
+    "SHOW COLUMNS FROM timers LIKE 'display_order'",
+  );
+  if (displayOrderColumn.length === 0) {
+    await connection.query(
+      'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
+    );
+  }
+  await connection.query(
+    'UPDATE timers SET display_order = id WHERE display_order IS NULL OR display_order = 0',
+  );
   await connection.end();
 
   pool = mysql.createPool({
@@ -397,7 +422,7 @@ app.post('/api/timers', async (req, res) => {
   try {
     const name = generateTimerName();
     const duration = DEFAULT_TIMER_DURATION_MS;
-    const insertId = await createTimerInDatabase({ name, durationMs: duration });
+    const { id: insertId, displayOrder } = await createTimerInDatabase({ name, durationMs: duration });
     const now = Date.now();
     const timer = {
       id: insertId,
@@ -406,6 +431,7 @@ app.post('/api/timers', async (req, res) => {
       remainingMs: duration,
       isRunning: false,
       repeatEnabled: false,
+      displayOrder,
       endTime: null,
       updatedAt: now,
     };
@@ -557,6 +583,57 @@ app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
     console.error('Error toggling repeat mode:', error);
     res.status(500).json({ message: '반복 설정을 변경하는 중 오류가 발생했습니다.' });
   }
+});
+
+app.post('/api/timers/reorder', async (req, res) => {
+  const { order } = req.body ?? {};
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ message: '변경할 순서를 전달해주세요.' });
+  }
+
+  const sanitizedOrder = order
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value));
+  const uniqueIds = Array.from(new Set(sanitizedOrder));
+  const currentIds = Array.from(timers.keys());
+
+  if (uniqueIds.length !== currentIds.length || uniqueIds.some((id) => !timers.has(id))) {
+    return res.status(400).json({ message: '잘못된 타이머 순서입니다.' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    for (let index = 0; index < uniqueIds.length; index += 1) {
+      const id = uniqueIds[index];
+      await connection.query('UPDATE timers SET display_order = ? WHERE id = ?', [index, id]);
+    }
+    await connection.commit();
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      console.error('Failed to rollback timer reorder:', rollbackError);
+    }
+    console.error('Error reordering timers:', error);
+    connection.release();
+    return res.status(500).json({ message: '타이머 순서를 변경하는 중 오류가 발생했습니다.' });
+  }
+
+  connection.release();
+
+  const now = Date.now();
+  uniqueIds.forEach((id, index) => {
+    const timer = timers.get(id);
+    if (timer) {
+      timer.displayOrder = index;
+      timer.updatedAt = now;
+    }
+  });
+
+  const payload = getTimersPayload(now);
+  broadcastTimers(payload);
+  res.json(payload);
 });
 
 setInterval(async () => {

@@ -417,26 +417,30 @@ button:disabled {
 }
 
 .timer-card-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(160px, auto);
   gap: 16px;
+  align-content: start;
 }
 
 .timer-card {
+  position: relative;
   display: flex;
-  gap: 0;
+  flex-direction: column;
   background-color: var(--card-bg);
   border-radius: 16px;
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   overflow: hidden;
+  min-height: 180px;
 }
 
 .timer-card-info {
-  flex: 3;
   display: flex;
   flex-direction: column;
-  padding: 20px;
-  gap: 12px;
+  padding: 16px;
+  gap: 10px;
+  min-height: 0;
 }
 
 .timer-card-info-header {
@@ -446,13 +450,14 @@ button:disabled {
 }
 
 .timer-card-name {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--secondary);
 }
 
 .repeat-button {
-  min-width: 80px;
+  min-width: 72px;
+  font-size: 0.85rem;
 }
 
 .repeat-button.active {
@@ -465,13 +470,17 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(2.5rem, 6vw, 3.2rem);
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
   font-weight: 700;
   color: var(--primary);
   text-align: center;
 }
 
 .timer-card-display.finished {
+  color: var(--danger);
+}
+
+.timer-card-display.critical {
   color: var(--danger);
 }
 
@@ -488,13 +497,15 @@ button:disabled {
 }
 
 .timer-card-action {
-  flex: 1;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  min-width: 160px;
+  padding: 14px 16px;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
 }
 
 .timer-edit-panel {
@@ -556,6 +567,86 @@ button:disabled {
   background-color: var(--card-bg);
   border-radius: 16px;
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.timer-card-drag-handle {
+  display: none;
+  width: 64px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d1d5db 0%, #cbd5f5 50%, #d1d5db 100%);
+  margin: 4px auto 8px;
+}
+
+.timer-card.is-editing .timer-card-drag-handle {
+  display: block;
+  cursor: grab;
+}
+
+.timer-card.is-editing {
+  cursor: grab;
+}
+
+.timer-card.dragging {
+  opacity: 0.65;
+}
+
+.timer-card.drop-target {
+  outline: 2px dashed var(--primary);
+}
+
+.timer-card.drop-target::before,
+.timer-card.drop-target::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.timer-card.drop-target-before::before {
+  top: 10px;
+  opacity: 1;
+}
+
+.timer-card.drop-target-after::after {
+  bottom: 10px;
+  opacity: 1;
+}
+
+.timer-progress {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  margin: 0 16px 16px;
+  overflow: hidden;
+}
+
+.timer-progress-bar {
+  height: 100%;
+  width: 100%;
+  background: var(--primary);
+  transition: width 0.2s linear, background-color 0.2s ease;
+}
+
+.timer-progress-bar.critical {
+  background: var(--danger);
+}
+
+@media (max-width: 1024px) {
+  .timer-card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .timer-card-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
