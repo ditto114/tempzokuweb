@@ -647,16 +647,18 @@ app.post('/api/timers/reorder', async (req, res) => {
   const { order, slots } = req.body ?? {};
   let layout = [];
 
+  const normalizeSlotValue = (value) => {
+    if (value == null || value === '') {
+      return null;
+    }
+    const numeric = Number(value);
+    return Number.isInteger(numeric) ? numeric : null;
+  };
+
   if (Array.isArray(slots)) {
-    layout = slots.map((value) => {
-      const numeric = Number(value);
-      return Number.isInteger(numeric) ? numeric : null;
-    });
+    layout = slots.map((value) => normalizeSlotValue(value));
   } else if (Array.isArray(order)) {
-    layout = order.map((value) => {
-      const numeric = Number(value);
-      return Number.isInteger(numeric) ? numeric : null;
-    });
+    layout = order.map((value) => normalizeSlotValue(value));
   } else {
     return res.status(400).json({ message: '변경할 순서를 전달해주세요.' });
   }

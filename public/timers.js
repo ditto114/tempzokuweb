@@ -937,6 +937,9 @@ function applySlotReorder(nextLayout) {
     return;
   }
   const normalizedLayout = nextLayout.map((value) => {
+    if (value == null || value === '') {
+      return null;
+    }
     const numeric = Number(value);
     return Number.isInteger(numeric) ? numeric : null;
   });

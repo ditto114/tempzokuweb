@@ -474,11 +474,21 @@ button:disabled {
 }
 
 .timer-card-info-header {
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 8px;
+  padding: 0 clamp(44px, 10vw, 64px);
+}
+
+.timer-card-info-header .repeat-button {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
 }
 
 .timer-card-name {
@@ -563,7 +573,7 @@ button:disabled {
 }
 
 .timer-card-reset-area.is-running {
-  background: var(--danger);
+  background: var(--primary);
 }
 
 .timer-card-reset-area .timer-reset-slider {
