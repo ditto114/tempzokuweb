@@ -22,6 +22,16 @@
     </header>
 
     <main class="timer-page-main">
+      <section class="timer-grid-settings hidden" id="timer-grid-settings" aria-label="타이머 슬롯 설정">
+        <div class="timer-grid-settings-row">
+          <label for="timer-grid-columns">열 수</label>
+          <input id="timer-grid-columns" type="number" min="1" max="6" step="1" value="3" />
+        </div>
+        <div class="timer-grid-settings-row">
+          <label for="timer-grid-rows">행 수</label>
+          <input id="timer-grid-rows" type="number" min="1" max="6" step="1" value="2" />
+        </div>
+      </section>
       <section class="timer-card-list" id="timer-list" aria-live="polite"></section>
       <p id="timer-stream-status" class="timer-stream-status" role="status">연결 상태 확인 중...</p>
     </main>

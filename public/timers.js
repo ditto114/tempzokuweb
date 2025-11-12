@@ -6,6 +6,9 @@ const timerListElement = document.getElementById('timer-list');
 const statusElement = document.getElementById('timer-stream-status');
 const addTimerButton = document.getElementById('add-timer-button');
 const toggleEditButton = document.getElementById('toggle-edit-mode');
+const gridSettingsPanel = document.getElementById('timer-grid-settings');
+const gridColumnsInput = document.getElementById('timer-grid-columns');
+const gridRowsInput = document.getElementById('timer-grid-rows');
 
 const timers = new Map();
 const timerDisplays = new Map();
@@ -14,6 +17,9 @@ const timerProgressBars = new Map();
 let eventSource = null;
 let isEditMode = false;
 let draggedTimerId = null;
+const GRID_SETTINGS_STORAGE_KEY = 'timer-grid-settings';
+const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
+let gridSettings = loadGridSettings();
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -79,6 +85,87 @@ function sortTimersForDisplay(values = Array.from(timers.values())) {
     }
     return a.id - b.id;
   });
+}
+
+function clampGridValue(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.floor(numeric)));
+}
+
+function normalizeGridSettings(raw = {}) {
+  const columns = clampGridValue(raw.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
+  const rows = clampGridValue(raw.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
+  return { columns, rows };
+}
+
+function loadGridSettings() {
+  try {
+    const stored = window.localStorage?.getItem(GRID_SETTINGS_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return normalizeGridSettings(parsed);
+    }
+  } catch (error) {
+    console.warn('Failed to load grid settings:', error);
+  }
+  return { ...DEFAULT_GRID_SETTINGS };
+}
+
+function saveGridSettings(settings) {
+  try {
+    window.localStorage?.setItem(GRID_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn('Failed to save grid settings:', error);
+  }
+}
+
+function applyGridSettings() {
+  if (!timerListElement || !gridSettings) {
+    return;
+  }
+  timerListElement.style.setProperty('--timer-grid-columns', String(gridSettings.columns));
+  timerListElement.style.setProperty('--timer-grid-rows', String(gridSettings.rows));
+}
+
+function syncGridSettingsInputs() {
+  if (!gridColumnsInput || !gridRowsInput || !gridSettings) {
+    return;
+  }
+  gridColumnsInput.value = String(gridSettings.columns);
+  gridRowsInput.value = String(gridSettings.rows);
+}
+
+function updateGridSettingsVisibility() {
+  if (!gridSettingsPanel) {
+    return;
+  }
+  gridSettingsPanel.classList.toggle('hidden', !isEditMode);
+  if (isEditMode) {
+    syncGridSettingsInputs();
+  }
+}
+
+function handleGridSettingsChange() {
+  if (!gridColumnsInput || !gridRowsInput) {
+    return;
+  }
+  const nextSettings = normalizeGridSettings({
+    columns: gridColumnsInput.value,
+    rows: gridRowsInput.value,
+  });
+  if (
+    nextSettings.columns === gridSettings.columns &&
+    nextSettings.rows === gridSettings.rows
+  ) {
+    return;
+  }
+  gridSettings = nextSettings;
+  saveGridSettings(gridSettings);
+  applyGridSettings();
+  renderTimers();
 }
 
 function applyTimerList(list) {
@@ -150,8 +237,8 @@ function createTimerCard(timer) {
     nameElement.textContent = timer.name;
   }
 
-  infoHeader.appendChild(repeatButton);
   infoHeader.appendChild(nameElement);
+  infoHeader.appendChild(repeatButton);
 
   const display = document.createElement('div');
   const remaining = getTimerRemaining(timer);
@@ -196,44 +283,51 @@ function createTimerCard(timer) {
   info.appendChild(infoHeader);
   info.appendChild(display);
 
-  if (!isEditMode && timer.isRunning) {
-    info.appendChild(createResetSlider(timer));
+  let progress = null;
+  if (timer.isRunning) {
+    progress = document.createElement('div');
+    progress.className = 'timer-progress';
+    const progressInner = document.createElement('div');
+    progressInner.className = 'timer-progress-bar';
+    const durationMs = Math.max(timer.durationMs, 1);
+    const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
+    progressInner.style.width = `${progressRatio * 100}%`;
+    if (remaining > 0 && remaining <= 60 * 1000) {
+      progressInner.classList.add('critical');
+    }
+    progress.appendChild(progressInner);
+    timerProgressBars.set(timer.id, progressInner);
   }
 
-  const progress = document.createElement('div');
-  progress.className = 'timer-progress';
-  const progressInner = document.createElement('div');
-  progressInner.className = 'timer-progress-bar';
-  const durationMs = Math.max(timer.durationMs, 1);
-  const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
-  progressInner.style.width = `${progressRatio * 100}%`;
-  if (remaining > 0 && remaining <= 60 * 1000) {
-    progressInner.classList.add('critical');
-  }
-  progress.appendChild(progressInner);
-  timerProgressBars.set(timer.id, progressInner);
-
-  const actionButton = document.createElement('button');
-  actionButton.type = 'button';
-  actionButton.className = 'timer-card-action';
-
+  let actionElement = null;
   if (isEditMode) {
-    actionButton.classList.add('danger');
-    actionButton.textContent = '삭제';
-    actionButton.addEventListener('click', () => deleteTimer(timer.id));
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'timer-card-action danger';
+    deleteButton.textContent = '삭제';
+    deleteButton.addEventListener('click', () => deleteTimer(timer.id));
+    actionElement = deleteButton;
   } else if (timer.isRunning) {
-    actionButton.classList.add('secondary');
-    actionButton.textContent = '일시정지';
-    actionButton.addEventListener('click', () => pauseTimer(timer.id));
+    const resetContainer = document.createElement('div');
+    resetContainer.className = 'timer-card-action timer-card-reset-area';
+    resetContainer.appendChild(createResetSlider(timer));
+    actionElement = resetContainer;
   } else {
-    actionButton.classList.add('primary');
-    actionButton.textContent = '시작';
-    actionButton.addEventListener('click', () => startTimer(timer.id));
+    const startButton = document.createElement('button');
+    startButton.type = 'button';
+    startButton.className = 'timer-card-action primary';
+    startButton.textContent = '시작';
+    startButton.addEventListener('click', () => startTimer(timer.id));
+    actionElement = startButton;
   }
 
   card.appendChild(info);
-  card.appendChild(progress);
-  card.appendChild(actionButton);
+  if (progress) {
+    card.appendChild(progress);
+  }
+  if (actionElement) {
+    card.appendChild(actionElement);
+  }
 
   return card;
 }
@@ -483,6 +577,7 @@ function renderTimers() {
     return;
   }
 
+  applyGridSettings();
   clearTimerDisplays();
   timerListElement.innerHTML = '';
 
@@ -493,6 +588,9 @@ function renderTimers() {
     const emptyMessage = document.createElement('p');
     emptyMessage.className = 'timer-empty';
     emptyMessage.textContent = '등록된 타이머가 없습니다. 추가 버튼을 눌러 타이머를 만들어주세요.';
+    if (isEditMode) {
+      emptyMessage.classList.add('timer-empty--editing');
+    }
     fragment.appendChild(emptyMessage);
   } else {
     sortedTimers.forEach((timer) => {
@@ -500,8 +598,46 @@ function renderTimers() {
     });
   }
 
+  if (isEditMode) {
+    appendDropSlots(fragment, sortedTimers.length);
+  }
+
   timerListElement.appendChild(fragment);
   updateTimerDisplays();
+}
+
+function appendDropSlots(fragment, timerCount) {
+  if (!timerListElement) {
+    return;
+  }
+
+  const columns = clampGridValue(gridSettings?.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
+  const rows = clampGridValue(gridSettings?.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
+  const desiredSlots = Math.max(columns * rows, timerCount);
+  let slotsAdded = 0;
+
+  for (let index = timerCount; index < desiredSlots; index += 1) {
+    fragment.appendChild(createDropSlot(index));
+    slotsAdded += 1;
+  }
+
+  if (slotsAdded === 0) {
+    fragment.appendChild(createDropSlot(timerCount));
+  }
+}
+
+function createDropSlot(index) {
+  const slot = document.createElement('div');
+  slot.className = 'timer-drop-slot';
+  slot.dataset.dropIndex = String(index);
+  slot.addEventListener('dragover', handleDragOver);
+  slot.addEventListener('dragleave', handleDragLeave);
+  slot.addEventListener('drop', handleDrop);
+  const label = document.createElement('span');
+  label.className = 'timer-drop-slot-label';
+  label.textContent = '여기에 놓기';
+  slot.appendChild(label);
+  return slot;
 }
 
 function updateTimerDisplays() {
@@ -528,6 +664,14 @@ function updateTimerDisplays() {
 
     const progressElement = timerProgressBars.get(id);
     if (progressElement) {
+      if (!timer.isRunning) {
+        timerProgressBars.delete(id);
+        const progressContainer = progressElement.parentElement;
+        if (progressContainer && progressContainer.parentElement) {
+          progressContainer.parentElement.removeChild(progressContainer);
+        }
+        return;
+      }
       const duration = Math.max(timer.durationMs, 1);
       const ratio = Math.max(0, Math.min(1, remaining / duration));
       progressElement.style.width = `${ratio * 100}%`;
@@ -604,15 +748,6 @@ async function startTimer(id) {
   }
 }
 
-async function pauseTimer(id) {
-  try {
-    const timer = await requestJson(`/api/timers/${id}/pause`, { method: 'POST' });
-    applyTimerUpdate(timer);
-  } catch (error) {
-    // 상태 메시지 출력됨
-  }
-}
-
 async function resetTimer(id) {
   try {
     const timer = await requestJson(`/api/timers/${id}/reset`, { method: 'POST' });
@@ -653,6 +788,7 @@ function toggleEditMode() {
   if (toggleEditButton) {
     toggleEditButton.textContent = isEditMode ? '수정 완료' : '수정';
   }
+  updateGridSettingsVisibility();
   clearDropIndicators();
   renderTimers();
 }
@@ -661,8 +797,8 @@ function clearDropIndicators() {
   if (!timerListElement) {
     return;
   }
-  timerListElement.querySelectorAll('.timer-card').forEach((card) => {
-    card.classList.remove('dragging', 'drop-target', 'drop-target-before', 'drop-target-after');
+  timerListElement.querySelectorAll('.timer-card, .timer-drop-slot').forEach((element) => {
+    element.classList.remove('dragging', 'drop-target', 'drop-target-before', 'drop-target-after');
   });
 }
 
@@ -695,6 +831,14 @@ function handleDragOver(event) {
     return;
   }
   const card = event.currentTarget;
+  if (card.classList.contains('timer-drop-slot')) {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+    card.classList.add('drop-target');
+    return;
+  }
   const targetId = Number(card.dataset.timerId);
   if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
     return;
@@ -762,12 +906,60 @@ function performLocalReorder(sourceId, targetId, insertAfter) {
     });
 }
 
+function performLocalReorderToIndex(sourceId, targetIndex) {
+  const sortedTimers = sortTimersForDisplay();
+  const order = sortedTimers.map((timer) => timer.id);
+  const fromIndex = order.indexOf(sourceId);
+  if (fromIndex === -1) {
+    return;
+  }
+
+  const [movedId] = order.splice(fromIndex, 1);
+  const desiredIndexRaw = Number(targetIndex);
+  const desiredIndex = Number.isFinite(desiredIndexRaw) ? desiredIndexRaw : order.length;
+  const clampedIndex = Math.max(0, Math.min(desiredIndex, order.length));
+  order.splice(clampedIndex, 0, movedId);
+
+  const hasChanged = order.some((id, index) => id !== sortedTimers[index]?.id);
+  if (!hasChanged) {
+    return;
+  }
+
+  order.forEach((id, index) => {
+    const timer = timers.get(id);
+    if (timer) {
+      timer.displayOrder = index;
+    }
+  });
+
+  renderTimers();
+
+  requestJson('/api/timers/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ order }),
+  })
+    .then((data) => {
+      if (Array.isArray(data?.timers)) {
+        applyTimerList(data.timers);
+      }
+    })
+    .catch(() => {
+      fetchTimers();
+    });
+}
+
 function handleDrop(event) {
   if (!isEditMode || draggedTimerId == null || !event.currentTarget) {
     return;
   }
   event.preventDefault();
   const card = event.currentTarget;
+  if (card.classList.contains('timer-drop-slot')) {
+    const dropIndex = Number(card.dataset.dropIndex);
+    clearDropIndicators();
+    performLocalReorderToIndex(draggedTimerId, dropIndex);
+    return;
+  }
   const targetId = Number(card.dataset.timerId);
   if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
     clearDropIndicators();
@@ -822,6 +1014,22 @@ if (addTimerButton) {
 if (toggleEditButton) {
   toggleEditButton.addEventListener('click', () => toggleEditMode());
 }
+
+if (gridColumnsInput) {
+  ['change', 'input'].forEach((eventName) => {
+    gridColumnsInput.addEventListener(eventName, handleGridSettingsChange);
+  });
+}
+
+if (gridRowsInput) {
+  ['change', 'input'].forEach((eventName) => {
+    gridRowsInput.addEventListener(eventName, handleGridSettingsChange);
+  });
+}
+
+syncGridSettingsInputs();
+updateGridSettingsVisibility();
+applyGridSettings();
 
 window.setInterval(() => {
   updateTimerDisplays();
