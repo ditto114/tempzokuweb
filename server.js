@@ -144,7 +144,6 @@ async function deleteTimerFromDatabase(id) {
 
     const displayOrder = Number(rows[0].display_order ?? 0);
     await connection.query('DELETE FROM timers WHERE id = ?', [id]);
-    await connection.query('UPDATE timers SET display_order = display_order - 1 WHERE display_order > ?', [displayOrder]);
     await connection.commit();
     return displayOrder;
   } catch (error) {
@@ -635,14 +634,6 @@ app.delete('/api/timers/:id', async (req, res) => {
 
     timers.delete(timerId);
     const now = Date.now();
-    for (const otherTimer of timers.values()) {
-      const currentOrder = Number.isFinite(otherTimer.displayOrder) ? otherTimer.displayOrder : 0;
-      if (currentOrder > removedOrder) {
-        otherTimer.displayOrder = currentOrder - 1;
-        otherTimer.updatedAt = now;
-      }
-    }
-
     const payload = getTimersPayload(now);
     broadcastTimers(payload);
     res.json(payload);
@@ -653,27 +644,51 @@ app.delete('/api/timers/:id', async (req, res) => {
 });
 
 app.post('/api/timers/reorder', async (req, res) => {
-  const { order } = req.body ?? {};
-  if (!Array.isArray(order)) {
+  const { order, slots } = req.body ?? {};
+  let layout = [];
+
+  if (Array.isArray(slots)) {
+    layout = slots.map((value) => {
+      const numeric = Number(value);
+      return Number.isInteger(numeric) ? numeric : null;
+    });
+  } else if (Array.isArray(order)) {
+    layout = order.map((value) => {
+      const numeric = Number(value);
+      return Number.isInteger(numeric) ? numeric : null;
+    });
+  } else {
     return res.status(400).json({ message: '변경할 순서를 전달해주세요.' });
   }
 
-  const sanitizedOrder = order
-    .map((value) => Number(value))
-    .filter((value) => Number.isInteger(value));
-  const uniqueIds = Array.from(new Set(sanitizedOrder));
-  const currentIds = Array.from(timers.keys());
+  const assignments = new Map();
+  for (let index = 0; index < layout.length; index += 1) {
+    const value = layout[index];
+    if (value == null) {
+      continue;
+    }
+    const id = Number(value);
+    if (!Number.isInteger(id) || !timers.has(id)) {
+      return res.status(400).json({ message: '잘못된 타이머 순서입니다.' });
+    }
+    if (assignments.has(id)) {
+      return res.status(400).json({ message: '잘못된 타이머 순서입니다.' });
+    }
+    assignments.set(id, index);
+  }
 
-  if (uniqueIds.length !== currentIds.length || uniqueIds.some((id) => !timers.has(id))) {
-    return res.status(400).json({ message: '잘못된 타이머 순서입니다.' });
+  for (const id of timers.keys()) {
+    if (!assignments.has(id)) {
+      layout.push(id);
+      assignments.set(id, layout.length - 1);
+    }
   }
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    for (let index = 0; index < uniqueIds.length; index += 1) {
-      const id = uniqueIds[index];
-      await connection.query('UPDATE timers SET display_order = ? WHERE id = ?', [index, id]);
+    for (const [id, position] of assignments.entries()) {
+      await connection.query('UPDATE timers SET display_order = ? WHERE id = ?', [position, id]);
     }
     await connection.commit();
   } catch (error) {
@@ -690,10 +705,10 @@ app.post('/api/timers/reorder', async (req, res) => {
   connection.release();
 
   const now = Date.now();
-  uniqueIds.forEach((id, index) => {
+  assignments.forEach((position, id) => {
     const timer = timers.get(id);
     if (timer) {
-      timer.displayOrder = index;
+      timer.displayOrder = position;
       timer.updatedAt = now;
     }
   });

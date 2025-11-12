@@ -17,6 +17,7 @@ const timerProgressBars = new Map();
 let eventSource = null;
 let isEditMode = false;
 let draggedTimerId = null;
+let slotLayout = [];
 const GRID_SETTINGS_STORAGE_KEY = 'timer-grid-settings';
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
 let gridSettings = loadGridSettings();
@@ -187,10 +188,14 @@ function clearTimerDisplays() {
   timerProgressBars.clear();
 }
 
-function createTimerCard(timer) {
+function createTimerCard(timer, slotIndex) {
   const card = document.createElement('article');
   card.className = 'timer-card';
   card.dataset.timerId = String(timer.id);
+  const normalizedSlotIndex = Number(slotIndex);
+  if (Number.isFinite(normalizedSlotIndex)) {
+    card.dataset.slotIndex = String(normalizedSlotIndex);
+  }
 
   if (isEditMode) {
     card.classList.add('is-editing');
@@ -237,8 +242,8 @@ function createTimerCard(timer) {
     nameElement.textContent = timer.name;
   }
 
-  infoHeader.appendChild(nameElement);
   infoHeader.appendChild(repeatButton);
+  infoHeader.appendChild(nameElement);
 
   const display = document.createElement('div');
   const remaining = getTimerRemaining(timer);
@@ -283,21 +288,22 @@ function createTimerCard(timer) {
   info.appendChild(infoHeader);
   info.appendChild(display);
 
-  let progress = null;
+  const durationMs = Math.max(timer.durationMs, 1);
+  const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
+  const progress = document.createElement('div');
+  progress.className = 'timer-progress';
+  const progressInner = document.createElement('div');
+  progressInner.className = 'timer-progress-bar';
+  progressInner.style.width = `${progressRatio * 100}%`;
   if (timer.isRunning) {
-    progress = document.createElement('div');
-    progress.className = 'timer-progress';
-    const progressInner = document.createElement('div');
-    progressInner.className = 'timer-progress-bar';
-    const durationMs = Math.max(timer.durationMs, 1);
-    const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
-    progressInner.style.width = `${progressRatio * 100}%`;
     if (remaining > 0 && remaining <= 60 * 1000) {
       progressInner.classList.add('critical');
     }
-    progress.appendChild(progressInner);
-    timerProgressBars.set(timer.id, progressInner);
+  } else {
+    progressInner.classList.add('paused');
   }
+  progress.appendChild(progressInner);
+  timerProgressBars.set(timer.id, progressInner);
 
   let actionElement = null;
   if (isEditMode) {
@@ -310,6 +316,7 @@ function createTimerCard(timer) {
   } else if (timer.isRunning) {
     const resetContainer = document.createElement('div');
     resetContainer.className = 'timer-card-action timer-card-reset-area';
+    resetContainer.classList.add('is-running');
     resetContainer.appendChild(createResetSlider(timer));
     actionElement = resetContainer;
   } else {
@@ -322,9 +329,7 @@ function createTimerCard(timer) {
   }
 
   card.appendChild(info);
-  if (progress) {
-    card.appendChild(progress);
-  }
+  card.appendChild(progress);
   if (actionElement) {
     card.appendChild(actionElement);
   }
@@ -572,6 +577,63 @@ function createResetSlider(timer) {
   return slider;
 }
 
+function buildSlotLayout(baseLayout = []) {
+  const sortedTimers = sortTimersForDisplay();
+  const columns = clampGridValue(gridSettings?.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
+  const rows = clampGridValue(gridSettings?.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
+  const highestOrder = sortedTimers.reduce((max, timer) => {
+    const order = Number(timer.displayOrder);
+    if (Number.isFinite(order)) {
+      return Math.max(max, Math.floor(order));
+    }
+    return max;
+  }, -1);
+  const baseLength = Math.max(columns * rows, highestOrder + 1, baseLayout.length, sortedTimers.length, 1);
+  const slots = new Array(baseLength).fill(null);
+  const assigned = new Set();
+
+  sortedTimers.forEach((timer) => {
+    if (assigned.has(timer.id)) {
+      return;
+    }
+
+    let slotIndex = Number(timer.displayOrder);
+    if (Number.isFinite(slotIndex)) {
+      slotIndex = Math.max(0, Math.floor(slotIndex));
+    } else {
+      slotIndex = null;
+    }
+
+    if (slotIndex != null) {
+      while (slotIndex >= slots.length) {
+        slots.push(null);
+      }
+      if (slots[slotIndex] == null) {
+        slots[slotIndex] = timer.id;
+        assigned.add(timer.id);
+        return;
+      }
+    }
+
+    let fallbackIndex = slots.indexOf(null);
+    if (fallbackIndex === -1) {
+      slots.push(timer.id);
+    } else {
+      slots[fallbackIndex] = timer.id;
+    }
+    assigned.add(timer.id);
+  });
+
+  return slots;
+}
+
+function createSlotPlaceholder() {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'timer-slot-placeholder';
+  placeholder.setAttribute('aria-hidden', 'true');
+  return placeholder;
+}
+
 function renderTimers() {
   if (!timerListElement) {
     return;
@@ -584,52 +646,43 @@ function renderTimers() {
   const fragment = document.createDocumentFragment();
   const sortedTimers = sortTimersForDisplay();
 
-  if (sortedTimers.length === 0) {
+  if (!isEditMode && sortedTimers.length === 0) {
     const emptyMessage = document.createElement('p');
     emptyMessage.className = 'timer-empty';
     emptyMessage.textContent = '등록된 타이머가 없습니다. 추가 버튼을 눌러 타이머를 만들어주세요.';
-    if (isEditMode) {
-      emptyMessage.classList.add('timer-empty--editing');
-    }
     fragment.appendChild(emptyMessage);
-  } else {
-    sortedTimers.forEach((timer) => {
-      fragment.appendChild(createTimerCard(timer));
-    });
   }
 
-  if (isEditMode) {
-    appendDropSlots(fragment, sortedTimers.length);
+  if (isEditMode || sortedTimers.length > 0) {
+    const slots = buildSlotLayout(slotLayout);
+    slotLayout = slots.slice();
+
+    slots.forEach((timerId, index) => {
+      if (Number.isInteger(timerId) && timers.has(timerId)) {
+        const timer = timers.get(timerId);
+        if (timer) {
+          fragment.appendChild(createTimerCard(timer, index));
+        }
+      } else if (isEditMode) {
+        fragment.appendChild(createDropSlot(index));
+      } else {
+        fragment.appendChild(createSlotPlaceholder());
+      }
+    });
+
+    if (isEditMode) {
+      fragment.appendChild(createDropSlot(slotLayout.length));
+    }
   }
 
   timerListElement.appendChild(fragment);
   updateTimerDisplays();
 }
 
-function appendDropSlots(fragment, timerCount) {
-  if (!timerListElement) {
-    return;
-  }
-
-  const columns = clampGridValue(gridSettings?.columns ?? DEFAULT_GRID_SETTINGS.columns, 1, 6);
-  const rows = clampGridValue(gridSettings?.rows ?? DEFAULT_GRID_SETTINGS.rows, 1, 6);
-  const desiredSlots = Math.max(columns * rows, timerCount);
-  let slotsAdded = 0;
-
-  for (let index = timerCount; index < desiredSlots; index += 1) {
-    fragment.appendChild(createDropSlot(index));
-    slotsAdded += 1;
-  }
-
-  if (slotsAdded === 0) {
-    fragment.appendChild(createDropSlot(timerCount));
-  }
-}
-
 function createDropSlot(index) {
   const slot = document.createElement('div');
   slot.className = 'timer-drop-slot';
-  slot.dataset.dropIndex = String(index);
+  slot.dataset.slotIndex = String(index);
   slot.addEventListener('dragover', handleDragOver);
   slot.addEventListener('dragleave', handleDragLeave);
   slot.addEventListener('drop', handleDrop);
@@ -664,22 +717,13 @@ function updateTimerDisplays() {
 
     const progressElement = timerProgressBars.get(id);
     if (progressElement) {
-      if (!timer.isRunning) {
-        timerProgressBars.delete(id);
-        const progressContainer = progressElement.parentElement;
-        if (progressContainer && progressContainer.parentElement) {
-          progressContainer.parentElement.removeChild(progressContainer);
-        }
-        return;
-      }
       const duration = Math.max(timer.durationMs, 1);
       const ratio = Math.max(0, Math.min(1, remaining / duration));
       progressElement.style.width = `${ratio * 100}%`;
-      if (!isFinished && remaining > 0 && remaining <= 60 * 1000) {
-        progressElement.classList.add('critical');
-      } else {
-        progressElement.classList.remove('critical');
-      }
+      const highlightCritical =
+        timer.isRunning && !isFinished && remaining > 0 && remaining <= 60 * 1000;
+      progressElement.classList.toggle('critical', Boolean(highlightCritical));
+      progressElement.classList.toggle('paused', !timer.isRunning);
     }
   });
 }
@@ -840,7 +884,8 @@ function handleDragOver(event) {
     return;
   }
   const targetId = Number(card.dataset.timerId);
-  if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
+  const slotIndex = Number(card.dataset.slotIndex);
+  if (!Number.isInteger(targetId) || targetId === draggedTimerId || !Number.isFinite(slotIndex)) {
     return;
   }
   event.preventDefault();
@@ -862,81 +907,70 @@ function handleDragLeave(event) {
   card.classList.remove('drop-target', 'drop-target-before', 'drop-target-after');
 }
 
-function performLocalReorder(sourceId, targetId, insertAfter) {
-  const sortedTimers = sortTimersForDisplay();
-  const order = sortedTimers.map((timer) => timer.id);
-  const fromIndex = order.indexOf(sourceId);
+function computeReorderedSlots(timerId, targetSlotIndex) {
+  if (!Number.isInteger(timerId)) {
+    return null;
+  }
+  const nextIndex = Number(targetSlotIndex);
+  if (!Number.isFinite(nextIndex) || nextIndex < 0) {
+    return null;
+  }
+  const currentLayout = Array.isArray(slotLayout) ? slotLayout.slice() : [];
+  const fromIndex = currentLayout.indexOf(timerId);
   if (fromIndex === -1) {
-    return;
+    return null;
   }
-  const [movedId] = order.splice(fromIndex, 1);
-  let targetIndex = order.indexOf(targetId);
-  if (targetIndex === -1) {
-    return;
+  while (currentLayout.length <= nextIndex) {
+    currentLayout.push(null);
   }
-  if (insertAfter) {
-    targetIndex += 1;
+  if (fromIndex === nextIndex) {
+    return currentLayout;
   }
-  order.splice(targetIndex, 0, movedId);
-
-  const hasChanged = order.some((id, index) => id !== sortedTimers[index]?.id);
-  if (!hasChanged) {
-    return;
-  }
-
-  order.forEach((id, index) => {
-    const timer = timers.get(id);
-    if (timer) {
-      timer.displayOrder = index;
-    }
-  });
-  renderTimers();
-
-  requestJson('/api/timers/reorder', {
-    method: 'POST',
-    body: JSON.stringify({ order }),
-  })
-    .then((data) => {
-      if (Array.isArray(data?.timers)) {
-        applyTimerList(data.timers);
-      }
-    })
-    .catch(() => {
-      fetchTimers();
-    });
+  const occupant = currentLayout[nextIndex];
+  currentLayout[nextIndex] = timerId;
+  currentLayout[fromIndex] = Number.isInteger(occupant) ? occupant : null;
+  return currentLayout;
 }
 
-function performLocalReorderToIndex(sourceId, targetIndex) {
-  const sortedTimers = sortTimersForDisplay();
-  const order = sortedTimers.map((timer) => timer.id);
-  const fromIndex = order.indexOf(sourceId);
-  if (fromIndex === -1) {
+function applySlotReorder(nextLayout) {
+  if (!Array.isArray(nextLayout)) {
     return;
   }
+  const normalizedLayout = nextLayout.map((value) => {
+    const numeric = Number(value);
+    return Number.isInteger(numeric) ? numeric : null;
+  });
+  const now = Date.now();
+  const seen = new Set();
 
-  const [movedId] = order.splice(fromIndex, 1);
-  const desiredIndexRaw = Number(targetIndex);
-  const desiredIndex = Number.isFinite(desiredIndexRaw) ? desiredIndexRaw : order.length;
-  const clampedIndex = Math.max(0, Math.min(desiredIndex, order.length));
-  order.splice(clampedIndex, 0, movedId);
-
-  const hasChanged = order.some((id, index) => id !== sortedTimers[index]?.id);
-  if (!hasChanged) {
-    return;
-  }
-
-  order.forEach((id, index) => {
-    const timer = timers.get(id);
-    if (timer) {
-      timer.displayOrder = index;
+  normalizedLayout.forEach((value, index) => {
+    if (Number.isInteger(value) && timers.has(value)) {
+      seen.add(value);
+      const timer = timers.get(value);
+      if (timer && timer.displayOrder !== index) {
+        timer.displayOrder = index;
+        timer.updatedAt = now;
+      }
+    } else {
+      normalizedLayout[index] = null;
     }
   });
 
+  timers.forEach((timer, id) => {
+    if (!seen.has(id)) {
+      normalizedLayout.push(id);
+      timer.displayOrder = normalizedLayout.length - 1;
+      timer.updatedAt = now;
+      seen.add(id);
+    }
+  });
+
+  slotLayout = normalizedLayout;
   renderTimers();
 
   requestJson('/api/timers/reorder', {
     method: 'POST',
-    body: JSON.stringify({ order }),
+    body: JSON.stringify({ slots: normalizedLayout }),
   })
     .then((data) => {
       if (Array.isArray(data?.timers)) {
@@ -954,21 +988,27 @@ function handleDrop(event) {
   }
   event.preventDefault();
   const card = event.currentTarget;
+  clearDropIndicators();
   if (card.classList.contains('timer-drop-slot')) {
-    const dropIndex = Number(card.dataset.dropIndex);
-    clearDropIndicators();
-    performLocalReorderToIndex(draggedTimerId, dropIndex);
+    const slotIndex = Number(card.dataset.slotIndex);
+    const nextLayout = computeReorderedSlots(draggedTimerId, slotIndex);
+    if (nextLayout) {
+      applySlotReorder(nextLayout);
+    }
     return;
   }
-  const targetId = Number(card.dataset.timerId);
-  if (!Number.isInteger(targetId) || targetId === draggedTimerId) {
-    clearDropIndicators();
+  const slotIndex = Number(card.dataset.slotIndex);
+  if (!Number.isFinite(slotIndex)) {
+    draggedTimerId = null;
     return;
   }
   const rect = card.getBoundingClientRect();
   const insertAfter = event.clientY - rect.top > rect.height / 2;
-  clearDropIndicators();
-  performLocalReorder(draggedTimerId, targetId, insertAfter);
+  const desiredIndex = insertAfter ? slotIndex + 1 : slotIndex;
+  const nextLayout = computeReorderedSlots(draggedTimerId, desiredIndex);
+  if (nextLayout) {
+    applySlotReorder(nextLayout);
+  }
 }
 
 function handleDragEnd(event) {

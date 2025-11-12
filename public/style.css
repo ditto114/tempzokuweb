@@ -475,13 +475,14 @@ button:disabled {
 
 .timer-card-info-header {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .timer-card-name {
+  flex: 1;
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--secondary);
@@ -490,6 +491,7 @@ button:disabled {
 }
 
 .timer-card-name-input {
+  flex: 1;
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
@@ -508,7 +510,8 @@ button:disabled {
 .repeat-button {
   min-width: 50px;
   padding: 5px 12px;
-  font-size: 0.75rem;
+  font-size: 0.82rem;
+  align-self: flex-start;
 }
 
 .repeat-button.active {
@@ -557,6 +560,10 @@ button:disabled {
   padding: 0;
   background: var(--primary);
   color: #ffffff;
+}
+
+.timer-card-reset-area.is-running {
+  background: var(--danger);
 }
 
 .timer-card-reset-area .timer-reset-slider {
@@ -801,6 +808,12 @@ button:disabled {
   pointer-events: none;
 }
 
+.timer-slot-placeholder {
+  min-height: 110px;
+  border-radius: 16px;
+  visibility: hidden;
+}
+
 .timer-empty--editing {
   border: 2px dashed rgba(74, 108, 247, 0.35);
 }
@@ -809,7 +822,7 @@ button:disabled {
   height: 6px;
   background: #e5e7eb;
   border-radius: 999px;
-  margin: 0 16px 16px;
+  margin: 0 8px 16px;
   overflow: hidden;
 }
 
@@ -818,6 +831,10 @@ button:disabled {
   width: 100%;
   background: var(--primary);
   transition: width 0.2s linear, background-color 0.2s ease;
+}
+
+.timer-progress-bar.paused {
+  background: #ffffff;
 }
 
 .timer-progress-bar.critical {
