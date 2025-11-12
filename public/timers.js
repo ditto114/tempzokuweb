@@ -13,7 +13,6 @@ const timerProgressBars = new Map();
 
 let eventSource = null;
 let isEditMode = false;
-let editingTimerId = null;
 let draggedTimerId = null;
 
 function clampTimerDuration(value) {
@@ -105,6 +104,7 @@ function createTimerCard(timer) {
   const card = document.createElement('article');
   card.className = 'timer-card';
   card.dataset.timerId = String(timer.id);
+
   if (isEditMode) {
     card.classList.add('is-editing');
     card.setAttribute('draggable', 'true');
@@ -123,6 +123,10 @@ function createTimerCard(timer) {
   dragHandle.setAttribute('aria-hidden', 'true');
   info.appendChild(dragHandle);
 
+  if (isEditMode) {
+    prepareDragHandle(card, dragHandle);
+  }
+
   const infoHeader = document.createElement('div');
   infoHeader.className = 'timer-card-info-header';
 
@@ -135,45 +139,65 @@ function createTimerCard(timer) {
   }
   repeatButton.addEventListener('click', () => toggleRepeat(timer.id));
 
-  const nameLabel = document.createElement('span');
-  nameLabel.className = 'timer-card-name';
-  nameLabel.textContent = timer.name;
+  const nameElement = isEditMode ? document.createElement('input') : document.createElement('span');
+  if (isEditMode) {
+    nameElement.type = 'text';
+    nameElement.className = 'timer-card-name-input';
+    nameElement.value = timer.name;
+    nameElement.maxLength = 50;
+  } else {
+    nameElement.className = 'timer-card-name';
+    nameElement.textContent = timer.name;
+  }
 
   infoHeader.appendChild(repeatButton);
-  infoHeader.appendChild(nameLabel);
+  infoHeader.appendChild(nameElement);
 
   const display = document.createElement('div');
-  display.className = 'timer-card-display';
   const remaining = getTimerRemaining(timer);
-  display.textContent = formatTimerDisplay(remaining);
-  if (!timer.isRunning && remaining === 0) {
-    display.classList.add('finished');
-  } else if (remaining > 0 && remaining <= 60 * 1000) {
-    display.classList.add('critical');
-  }
-  timerDisplays.set(timer.id, display);
 
-  const secondaryActions = document.createElement('div');
-  secondaryActions.className = 'timer-card-secondary-actions';
+  if (isEditMode) {
+    display.className = 'timer-card-display timer-card-display-editable';
+    const minuteInput = document.createElement('input');
+    minuteInput.type = 'number';
+    minuteInput.min = '0';
+    minuteInput.max = '180';
+    minuteInput.value = String(Math.floor(timer.durationMs / 60000));
 
-  const auxButton = document.createElement('button');
-  auxButton.type = 'button';
-  auxButton.className = 'tertiary';
-  if (timer.isRunning) {
-    auxButton.textContent = '일시정지';
-    auxButton.addEventListener('click', () => pauseTimer(timer.id));
+    const separator = document.createElement('span');
+    separator.textContent = ':';
+
+    const secondInput = document.createElement('input');
+    secondInput.type = 'number';
+    secondInput.min = '0';
+    secondInput.max = '59';
+    secondInput.value = String(Math.floor((timer.durationMs % 60000) / 1000)).padStart(2, '0');
+
+    display.appendChild(minuteInput);
+    display.appendChild(separator);
+    display.appendChild(secondInput);
+
+    attachInlineEditor(timer, {
+      nameInput: nameElement,
+      minuteInput,
+      secondInput,
+    });
   } else {
-    auxButton.textContent = '초기화';
-    auxButton.addEventListener('click', () => resetTimer(timer.id));
+    display.className = 'timer-card-display';
+    display.textContent = formatTimerDisplay(remaining);
+    if (!timer.isRunning && remaining === 0) {
+      display.classList.add('finished');
+    } else if (remaining > 0 && remaining <= 60 * 1000) {
+      display.classList.add('critical');
+    }
+    timerDisplays.set(timer.id, display);
   }
-  secondaryActions.appendChild(auxButton);
 
   info.appendChild(infoHeader);
   info.appendChild(display);
-  info.appendChild(secondaryActions);
 
-  if (isEditMode && editingTimerId === timer.id) {
-    info.appendChild(createEditPanel(timer));
+  if (!isEditMode && timer.isRunning) {
+    info.appendChild(createResetSlider(timer));
   }
 
   const progress = document.createElement('div');
@@ -194,19 +218,17 @@ function createTimerCard(timer) {
   actionButton.className = 'timer-card-action';
 
   if (isEditMode) {
+    actionButton.classList.add('danger');
+    actionButton.textContent = '삭제';
+    actionButton.addEventListener('click', () => deleteTimer(timer.id));
+  } else if (timer.isRunning) {
     actionButton.classList.add('secondary');
-    actionButton.textContent = '수정';
-    actionButton.addEventListener('click', () => openEditPanel(timer.id));
+    actionButton.textContent = '일시정지';
+    actionButton.addEventListener('click', () => pauseTimer(timer.id));
   } else {
-    actionButton.classList.add(timer.isRunning ? 'danger' : 'primary');
-    actionButton.textContent = timer.isRunning ? '리셋' : '시작';
-    actionButton.addEventListener('click', () => {
-      if (timer.isRunning) {
-        resetTimer(timer.id);
-      } else {
-        startTimer(timer.id);
-      }
-    });
+    actionButton.classList.add('primary');
+    actionButton.textContent = '시작';
+    actionButton.addEventListener('click', () => startTimer(timer.id));
   }
 
   card.appendChild(info);
@@ -216,88 +238,244 @@ function createTimerCard(timer) {
   return card;
 }
 
-function createEditPanel(timer) {
-  const panel = document.createElement('div');
-  panel.className = 'timer-edit-panel';
+function prepareDragHandle(card, dragHandle) {
+  if (!card || !dragHandle) {
+    return;
+  }
 
-  const nameLabel = document.createElement('label');
-  nameLabel.textContent = '타이머 이름';
-  const nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.value = timer.name;
-  nameInput.maxLength = 50;
-  nameLabel.appendChild(nameInput);
+  const markReady = () => {
+    card.dataset.dragReady = 'true';
+  };
 
-  const durationWrapper = document.createElement('div');
-  durationWrapper.className = 'timer-edit-duration';
+  const clearReady = () => {
+    delete card.dataset.dragReady;
+  };
 
-  const minuteLabel = document.createElement('label');
-  minuteLabel.textContent = '분';
-  const minuteInput = document.createElement('input');
-  minuteInput.type = 'number';
-  minuteInput.min = '0';
-  minuteInput.max = '180';
-  minuteInput.value = String(Math.floor(timer.durationMs / 60000));
-  minuteLabel.appendChild(minuteInput);
+  ['pointerdown', 'mousedown', 'touchstart'].forEach((eventName) => {
+    dragHandle.addEventListener(eventName, markReady);
+  });
 
-  const secondLabel = document.createElement('label');
-  secondLabel.textContent = '초';
-  const secondInput = document.createElement('input');
-  secondInput.type = 'number';
-  secondInput.min = '0';
-  secondInput.max = '59';
-  secondInput.value = String(Math.floor((timer.durationMs % 60000) / 1000)).padStart(2, '0');
-  secondLabel.appendChild(secondInput);
+  ['pointerup', 'pointercancel', 'pointerleave', 'mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => {
+    dragHandle.addEventListener(eventName, clearReady);
+  });
 
-  durationWrapper.appendChild(minuteLabel);
-  durationWrapper.appendChild(secondLabel);
+  card.addEventListener('dragend', clearReady);
+}
 
-  const actionRow = document.createElement('div');
-  actionRow.className = 'timer-edit-actions';
+function attachInlineEditor(timer, { nameInput, minuteInput, secondInput }) {
+  if (!(nameInput instanceof HTMLInputElement) || !(minuteInput instanceof HTMLInputElement) || !(secondInput instanceof HTMLInputElement)) {
+    return;
+  }
 
-  const saveButton = document.createElement('button');
-  saveButton.type = 'button';
-  saveButton.className = 'primary';
-  saveButton.textContent = '저장';
-  saveButton.addEventListener('click', async () => {
+  const applyTimerDefaults = () => {
+    minuteInput.value = String(Math.floor(timer.durationMs / 60000));
+    secondInput.value = String(Math.floor((timer.durationMs % 60000) / 1000)).padStart(2, '0');
+  };
+
+  const normalizeValues = () => {
     const name = nameInput.value.trim() || timer.name;
-    const minutes = Number(minuteInput.value);
-    const seconds = Number(secondInput.value);
-    const safeMinutes = Number.isFinite(minutes) ? Math.max(0, Math.floor(minutes)) : 0;
-    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
-    const clampedSeconds = Math.min(59, safeSeconds);
+    const minutesValue = Number(minuteInput.value);
+    const secondsValue = Number(secondInput.value);
+    const safeMinutes = Number.isFinite(minutesValue) ? Math.max(0, Math.floor(minutesValue)) : 0;
+    const safeSecondsRaw = Number.isFinite(secondsValue) ? Math.max(0, Math.floor(secondsValue)) : 0;
+    const clampedSeconds = Math.min(59, safeSecondsRaw);
+
     minuteInput.value = String(safeMinutes);
     secondInput.value = String(clampedSeconds).padStart(2, '0');
+    nameInput.value = name;
+
     const totalSeconds = safeMinutes * 60 + clampedSeconds;
     const durationMs = clampTimerDuration(totalSeconds * 1000);
 
+    return { name, durationMs };
+  };
+
+  let isSubmitting = false;
+  let pending = false;
+
+  const submitChanges = async () => {
+    const { name, durationMs } = normalizeValues();
+
     if (durationMs < MIN_TIMER_DURATION_MS) {
-      alert('타이머 시간은 최소 5초 이상이어야 합니다.');
+      window.alert('타이머 시간은 최소 5초 이상이어야 합니다.');
+      applyTimerDefaults();
       return;
     }
 
-    await updateTimer(timer.id, { name, duration: durationMs });
-    closeEditPanel();
+    if (isSubmitting) {
+      pending = true;
+      return;
+    }
+
+    if (name === timer.name && durationMs === timer.durationMs) {
+      return;
+    }
+
+    isSubmitting = true;
+    try {
+      await updateTimer(timer.id, { name, duration: durationMs });
+    } finally {
+      isSubmitting = false;
+      if (pending) {
+        pending = false;
+        submitChanges();
+      }
+    }
+  };
+
+  const handleBlur = () => {
+    normalizeValues();
+  };
+
+  [nameInput, minuteInput, secondInput].forEach((element) => {
+    element.addEventListener('change', submitChanges);
+    element.addEventListener('blur', handleBlur);
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submitChanges();
+      }
+    });
   });
+}
 
-  const cancelButton = document.createElement('button');
-  cancelButton.type = 'button';
-  cancelButton.className = 'secondary';
-  cancelButton.textContent = '취소';
-  cancelButton.addEventListener('click', () => closeEditPanel());
+function createResetSlider(timer) {
+  const slider = document.createElement('div');
+  slider.className = 'timer-reset-slider';
 
-  actionRow.appendChild(saveButton);
-  actionRow.appendChild(cancelButton);
+  const label = document.createElement('span');
+  label.className = 'timer-reset-label';
+  label.textContent = '밀어서 타이머 리셋';
 
-  panel.appendChild(nameLabel);
-  panel.appendChild(durationWrapper);
-  panel.appendChild(actionRow);
+  const knob = document.createElement('button');
+  knob.type = 'button';
+  knob.className = 'timer-reset-knob';
+  knob.textContent = '➜';
 
-  window.setTimeout(() => {
-    nameInput.focus();
-  }, 0);
+  slider.appendChild(label);
+  slider.appendChild(knob);
 
-  return panel;
+  let isDragging = false;
+  let pointerId = null;
+  let startX = 0;
+  let currentOffset = 0;
+  let maxOffset = 0;
+  let isProcessing = false;
+
+  const getPointerX = (event) => {
+    if (typeof event.clientX === 'number') {
+      return event.clientX;
+    }
+    if (event.touches && event.touches[0]) {
+      return event.touches[0].clientX;
+    }
+    return 0;
+  };
+
+  const setPosition = (offset, animate = false) => {
+    const clamped = Math.max(0, Math.min(maxOffset, offset));
+    currentOffset = clamped;
+    if (animate) {
+      knob.style.transition = 'transform 0.2s ease';
+      label.style.transition = 'opacity 0.2s ease';
+    } else {
+      knob.style.transition = '';
+      label.style.transition = '';
+    }
+
+    knob.style.transform = `translateX(${clamped}px)`;
+    const ratio = maxOffset > 0 ? Math.min(1, clamped / maxOffset) : 0;
+    slider.style.setProperty('--slider-progress', String(ratio));
+    label.style.opacity = String(1 - Math.min(0.95, ratio));
+
+    if (animate) {
+      window.setTimeout(() => {
+        knob.style.transition = '';
+        label.style.transition = '';
+      }, 200);
+    }
+  };
+
+  const resetPosition = () => {
+    setPosition(0, true);
+  };
+
+  const computeMaxOffset = () => {
+    const sliderStyles = window.getComputedStyle(slider);
+    const paddingLeft = Number.parseFloat(sliderStyles.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(sliderStyles.paddingRight) || 0;
+    const baseOffset = Number.parseFloat(window.getComputedStyle(knob).left) || 0;
+    const innerWidth = slider.clientWidth - paddingLeft - paddingRight;
+    maxOffset = Math.max(0, innerWidth - knob.offsetWidth - baseOffset);
+  };
+
+  const startDrag = (event) => {
+    if (isProcessing) {
+      return;
+    }
+    event.preventDefault();
+    computeMaxOffset();
+    isDragging = true;
+    pointerId = event.pointerId ?? null;
+    const pointerX = getPointerX(event);
+    startX = pointerX - currentOffset;
+    slider.classList.add('dragging');
+    if (pointerId != null && typeof knob.setPointerCapture === 'function') {
+      knob.setPointerCapture(pointerId);
+    }
+  };
+
+  const moveDrag = (event) => {
+    if (!isDragging) {
+      return;
+    }
+    if (pointerId != null && event.pointerId != null && event.pointerId !== pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const pointerX = getPointerX(event);
+    const offset = pointerX - startX;
+    setPosition(offset, false);
+  };
+
+  const finishDrag = (event) => {
+    if (!isDragging) {
+      return;
+    }
+    if (pointerId != null && event.pointerId != null && event.pointerId !== pointerId) {
+      return;
+    }
+    event.preventDefault();
+    isDragging = false;
+    slider.classList.remove('dragging');
+    if (pointerId != null && typeof knob.releasePointerCapture === 'function') {
+      knob.releasePointerCapture(pointerId);
+    }
+    pointerId = null;
+
+    const ratio = maxOffset > 0 ? currentOffset / maxOffset : 0;
+    if (ratio >= 0.9) {
+      setPosition(maxOffset, true);
+      isProcessing = true;
+      knob.disabled = true;
+      resetTimer(timer.id)
+        .catch(() => {})
+        .finally(() => {
+          isProcessing = false;
+          knob.disabled = false;
+          resetPosition();
+        });
+    } else {
+      resetPosition();
+    }
+  };
+
+  knob.addEventListener('pointerdown', startDrag);
+  knob.addEventListener('pointermove', moveDrag);
+  knob.addEventListener('pointerup', finishDrag);
+  knob.addEventListener('pointercancel', finishDrag);
+
+  return slider;
 }
 
 function renderTimers() {
@@ -453,20 +631,23 @@ async function toggleRepeat(id) {
   }
 }
 
-function openEditPanel(id) {
-  editingTimerId = id;
-  renderTimers();
-}
-
-function closeEditPanel() {
-  editingTimerId = null;
-  renderTimers();
+async function deleteTimer(id) {
+  try {
+    const response = await requestJson(`/api/timers/${id}`, { method: 'DELETE' });
+    if (Array.isArray(response?.timers)) {
+      applyTimerList(response.timers);
+    } else {
+      timers.delete(Number(id));
+      renderTimers();
+    }
+  } catch (error) {
+    // 상태 메시지 출력됨
+  }
 }
 
 function toggleEditMode() {
   isEditMode = !isEditMode;
   if (!isEditMode) {
-    editingTimerId = null;
     draggedTimerId = null;
   }
   if (toggleEditButton) {
@@ -490,11 +671,12 @@ function handleDragStart(event) {
     event.preventDefault();
     return;
   }
-  if (!event.target || !event.target.closest('.timer-card-drag-handle')) {
+  const card = event.currentTarget;
+  if (card.dataset.dragReady !== 'true') {
     event.preventDefault();
     return;
   }
-  const card = event.currentTarget;
+  delete card.dataset.dragReady;
   const timerId = Number(card.dataset.timerId);
   if (!Number.isInteger(timerId)) {
     event.preventDefault();
