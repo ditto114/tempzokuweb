@@ -10,6 +10,7 @@ const gridSettingsPanel = document.getElementById('timer-grid-settings');
 const gridColumnsInput = document.getElementById('timer-grid-columns');
 const gridRowsInput = document.getElementById('timer-grid-rows');
 const shortcutButton = document.getElementById('timer-shortcut-button');
+const toggleViewModeButton = document.getElementById('toggle-view-mode');
 
 const timers = new Map();
 const timerDisplays = new Map();
@@ -17,6 +18,9 @@ const timerProgressBars = new Map();
 
 const SHORTCUT_COOKIE_NAME = 'timer_shortcuts';
 const SHORTCUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const VIEW_MODE_COOKIE_NAME = 'timer_view_positions';
+const VIEW_MODE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const VIEW_MODE_GRID_SIZE = 10;
 const BLOCKED_SHORTCUT_KEYS = new Set([
   'Shift',
   'Control',
@@ -33,10 +37,12 @@ const BLOCKED_SHORTCUT_KEYS = new Set([
 
 const shortcutAssignments = new Map();
 const shortcutKeyToTimer = new Map();
+const viewModePositions = new Map();
 
 let eventSource = null;
 let isEditMode = false;
 let isShortcutMode = false;
+let isViewMode = false;
 let draggedTimerId = null;
 let slotLayout = [];
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
@@ -46,6 +52,7 @@ let hasServerClockOffset = false;
 let pendingShortcutTimerId = null;
 let shortcutModalElements = null;
 let shortcutModalKeyListener = null;
+let viewModeDragState = null;
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -152,6 +159,149 @@ function loadShortcutAssignments() {
     shortcutAssignments.clear();
     shortcutKeyToTimer.clear();
     persistShortcutAssignments();
+  }
+}
+
+function snapToViewGrid(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.round(value / VIEW_MODE_GRID_SIZE) * VIEW_MODE_GRID_SIZE;
+}
+
+function snapViewPosition(position) {
+  if (!position || typeof position !== 'object') {
+    return { x: 0, y: 0 };
+  }
+  return {
+    x: snapToViewGrid(Number(position.x)),
+    y: snapToViewGrid(Number(position.y)),
+  };
+}
+
+function normalizeViewModePosition(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const xValue = raw.x ?? raw.left ?? (Array.isArray(raw) ? raw[0] : undefined);
+  const yValue = raw.y ?? raw.top ?? (Array.isArray(raw) ? raw[1] : undefined);
+  const x = Number(xValue);
+  const y = Number(yValue);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return { x, y };
+}
+
+function persistViewModePositions() {
+  try {
+    if (viewModePositions.size === 0) {
+      document.cookie = `${VIEW_MODE_COOKIE_NAME}=;path=/;max-age=0;samesite=lax`;
+      return;
+    }
+    const payload = {};
+    viewModePositions.forEach((value, id) => {
+      const normalized = normalizeViewModePosition(value);
+      if (!normalized) {
+        return;
+      }
+      payload[id] = { x: normalized.x, y: normalized.y };
+    });
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    document.cookie = `${VIEW_MODE_COOKIE_NAME}=${encoded};path=/;max-age=${VIEW_MODE_COOKIE_MAX_AGE};samesite=lax`;
+  } catch (error) {
+    console.error('Failed to persist timer view positions:', error);
+  }
+}
+
+function loadViewModePositions() {
+  viewModePositions.clear();
+  const cookieString = document.cookie || '';
+  const prefix = `${VIEW_MODE_COOKIE_NAME}=`;
+  const parts = cookieString.split(';');
+  let storedValue = null;
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      storedValue = trimmed.slice(prefix.length);
+      break;
+    }
+  }
+  if (!storedValue) {
+    return;
+  }
+  try {
+    const decoded = decodeURIComponent(storedValue);
+    const parsed = JSON.parse(decoded);
+    let needsPersist = false;
+    if (parsed && typeof parsed === 'object') {
+      Object.entries(parsed).forEach(([idKey, value]) => {
+        const id = Number(idKey);
+        const normalized = normalizeViewModePosition(value);
+        if (!Number.isInteger(id) || !normalized) {
+          needsPersist = true;
+          return;
+        }
+        viewModePositions.set(id, normalized);
+      });
+    }
+    if (needsPersist) {
+      persistViewModePositions();
+    }
+  } catch (error) {
+    console.error('Failed to load timer view positions:', error);
+    viewModePositions.clear();
+    persistViewModePositions();
+  }
+}
+
+function getViewModePosition(timerId) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return null;
+  }
+  return viewModePositions.get(id) ?? null;
+}
+
+function setViewModePosition(timerId, position, { persist = true } = {}) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return false;
+  }
+  const normalized = normalizeViewModePosition(position);
+  if (!normalized) {
+    return false;
+  }
+  const snapped = snapViewPosition(normalized);
+  viewModePositions.set(id, snapped);
+  if (persist) {
+    persistViewModePositions();
+  }
+  return true;
+}
+
+function removeViewModePosition(timerId, { persist = true } = {}) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return false;
+  }
+  const hasItem = viewModePositions.delete(id);
+  if (hasItem && persist) {
+    persistViewModePositions();
+  }
+  return hasItem;
+}
+
+function pruneViewModePositions() {
+  let hasChanges = false;
+  viewModePositions.forEach((_, id) => {
+    if (!timers.has(id)) {
+      viewModePositions.delete(id);
+      hasChanges = true;
+    }
+  });
+  if (hasChanges) {
+    persistViewModePositions();
   }
 }
 
@@ -616,6 +766,7 @@ function applyTimerList(list) {
     timers.set(timer.id, timer);
   });
   pruneShortcutAssignments();
+  pruneViewModePositions();
   renderTimers();
 }
 
@@ -892,6 +1043,227 @@ function prepareCardDragArea(card) {
   });
 
   card.addEventListener('dragend', clearReady);
+}
+
+function ensureViewModeCardSizing(card, measuredWidth) {
+  if (!card) {
+    return;
+  }
+  const widthValue = Number.isFinite(measuredWidth) ? measuredWidth : card.offsetWidth;
+  if (Number.isFinite(widthValue) && widthValue > 0) {
+    card.style.width = `${widthValue}px`;
+    card.dataset.viewModeWidth = String(widthValue);
+  }
+}
+
+function setViewModeCardPosition(card, position, { skipUpdate = false } = {}) {
+  if (!card || !position || typeof position !== 'object') {
+    return;
+  }
+  const x = Number(position.x);
+  const y = Number(position.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
+  card.classList.add('view-mode-card');
+  card.style.position = 'absolute';
+  card.style.left = `${x}px`;
+  card.style.top = `${y}px`;
+  card.style.margin = '0';
+  card.dataset.viewModeX = String(x);
+  card.dataset.viewModeY = String(y);
+  if (!skipUpdate) {
+    updateViewModeCanvasSize();
+  }
+}
+
+function updateViewModeCanvasSize() {
+  if (!timerListElement) {
+    return;
+  }
+  if (!isViewMode) {
+    timerListElement.style.height = '';
+    return;
+  }
+  const cards = timerListElement.querySelectorAll('.timer-card.view-mode-card');
+  if (cards.length === 0) {
+    timerListElement.style.height = '240px';
+    return;
+  }
+  let maxBottom = 0;
+  cards.forEach((card) => {
+    const top = Number(card.dataset.viewModeY ?? card.style.top?.replace('px', ''));
+    const height = card.offsetHeight;
+    if (Number.isFinite(top) && Number.isFinite(height)) {
+      const bottom = top + height;
+      if (bottom > maxBottom) {
+        maxBottom = bottom;
+      }
+    }
+  });
+  const padding = 48;
+  const safeHeight = Math.max(240, Math.floor(maxBottom + padding));
+  timerListElement.style.height = `${safeHeight}px`;
+}
+
+function prepareViewModeCard(card, timerId) {
+  if (!card || !Number.isInteger(timerId)) {
+    return;
+  }
+  if (card.dataset.viewModePrepared === 'true') {
+    return;
+  }
+  card.dataset.viewModePrepared = 'true';
+  card.addEventListener('pointerdown', (event) => handleViewModePointerDown(event, card, timerId));
+}
+
+function applyViewModeLayout() {
+  if (!timerListElement) {
+    return;
+  }
+  const cards = Array.from(timerListElement.querySelectorAll('.timer-card'));
+  if (cards.length === 0) {
+    timerListElement.classList.add('view-mode-active');
+    updateViewModeCanvasSize();
+    return;
+  }
+
+  const measurements = cards.map((card) => ({
+    card,
+    timerId: Number(card.dataset.timerId),
+    rect: card.getBoundingClientRect(),
+  }));
+
+  const containerRect = timerListElement.getBoundingClientRect();
+
+  timerListElement.classList.add('view-mode-active');
+
+  measurements.forEach(({ card, timerId, rect }) => {
+    ensureViewModeCardSizing(card, rect.width);
+    if (Number.isInteger(timerId)) {
+      prepareViewModeCard(card, timerId);
+    }
+    const saved = Number.isInteger(timerId) ? getViewModePosition(timerId) : null;
+    const defaultPosition = {
+      x: rect.left - containerRect.left,
+      y: rect.top - containerRect.top,
+    };
+    const targetPosition = saved ? snapViewPosition(saved) : snapViewPosition(defaultPosition);
+    setViewModeCardPosition(card, targetPosition, { skipUpdate: true });
+  });
+
+  updateViewModeCanvasSize();
+}
+
+function cancelActiveViewModeDrag() {
+  if (!viewModeDragState) {
+    return;
+  }
+  const { card, pointerId } = viewModeDragState;
+  if (card) {
+    card.classList.remove('view-mode-dragging');
+    card.style.zIndex = '';
+    try {
+      card.releasePointerCapture(pointerId);
+    } catch (error) {
+      // ignore
+    }
+  }
+  viewModeDragState = null;
+}
+
+function handleViewModePointerDown(event, card, timerId) {
+  if (!isViewMode || !timerListElement) {
+    return;
+  }
+  if (!card || !Number.isInteger(timerId)) {
+    return;
+  }
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  const interactiveTarget = event.target instanceof HTMLElement ? event.target.closest('button, input, textarea, select, a, label') : null;
+  if (interactiveTarget) {
+    return;
+  }
+
+  const containerRect = timerListElement.getBoundingClientRect();
+  const currentX = Number.parseFloat(card.style.left);
+  const currentY = Number.parseFloat(card.style.top);
+  const cardRect = card.getBoundingClientRect();
+  const startX = Number.isFinite(currentX) ? currentX : cardRect.left - containerRect.left;
+  const startY = Number.isFinite(currentY) ? currentY : cardRect.top - containerRect.top;
+  ensureViewModeCardSizing(card);
+  const snappedStart = snapViewPosition({ x: startX, y: startY });
+
+  viewModeDragState = {
+    timerId,
+    card,
+    pointerId: event.pointerId,
+    offsetX: event.clientX - (containerRect.left + snappedStart.x),
+    offsetY: event.clientY - (containerRect.top + snappedStart.y),
+    latestX: snappedStart.x,
+    latestY: snappedStart.y,
+  };
+
+  card.classList.add('view-mode-dragging');
+  card.style.zIndex = '40';
+
+  try {
+    card.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // ignore
+  }
+
+  event.preventDefault();
+}
+
+function handleViewModePointerMove(event) {
+  if (!viewModeDragState || !isViewMode || !timerListElement) {
+    return;
+  }
+  const { card, offsetX, offsetY } = viewModeDragState;
+  if (!card) {
+    return;
+  }
+  const containerRect = timerListElement.getBoundingClientRect();
+  const nextX = snapToViewGrid(event.clientX - containerRect.left - offsetX);
+  const nextY = snapToViewGrid(event.clientY - containerRect.top - offsetY);
+  if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
+    return;
+  }
+
+  viewModeDragState.latestX = nextX;
+  viewModeDragState.latestY = nextY;
+
+  setViewModeCardPosition(card, { x: nextX, y: nextY }, { skipUpdate: true });
+  updateViewModeCanvasSize();
+}
+
+function handleViewModePointerUp(event) {
+  if (!viewModeDragState) {
+    return;
+  }
+  const { card, pointerId, timerId, latestX, latestY } = viewModeDragState;
+  if (event && event.pointerId != null && pointerId != null && event.pointerId !== pointerId) {
+    return;
+  }
+  if (card) {
+    card.classList.remove('view-mode-dragging');
+    card.style.zIndex = '';
+    try {
+      card.releasePointerCapture(pointerId);
+    } catch (error) {
+      // ignore
+    }
+  }
+
+  if (Number.isInteger(timerId) && Number.isFinite(latestX) && Number.isFinite(latestY)) {
+    setViewModePosition(timerId, { x: latestX, y: latestY });
+  }
+
+  viewModeDragState = null;
+  updateViewModeCanvasSize();
 }
 
 function attachInlineEditor(timer, { nameInput, minuteInput, secondInput }) {
@@ -1172,9 +1544,13 @@ function renderTimers() {
     return;
   }
 
+  cancelActiveViewModeDrag();
   pruneShortcutAssignments();
+  pruneViewModePositions();
   applyGridSettings();
   clearTimerDisplays();
+  timerListElement.classList.remove('view-mode-active');
+  timerListElement.style.height = '';
   timerListElement.innerHTML = '';
 
   const fragment = document.createDocumentFragment();
@@ -1191,26 +1567,40 @@ function renderTimers() {
     const slots = buildSlotLayout(slotLayout);
     slotLayout = slots.slice();
 
-    slots.forEach((timerId, index) => {
-      if (Number.isInteger(timerId) && timers.has(timerId)) {
-        const timer = timers.get(timerId);
-        if (timer) {
-          fragment.appendChild(createTimerCard(timer, index));
+    if (isViewMode) {
+      slots.forEach((timerId, index) => {
+        if (Number.isInteger(timerId) && timers.has(timerId)) {
+          const timer = timers.get(timerId);
+          if (timer) {
+            fragment.appendChild(createTimerCard(timer, index));
+          }
         }
-      } else if (isEditMode) {
-        fragment.appendChild(createDropSlot(index));
-      } else {
-        fragment.appendChild(createSlotPlaceholder());
-      }
-    });
+      });
+    } else {
+      slots.forEach((timerId, index) => {
+        if (Number.isInteger(timerId) && timers.has(timerId)) {
+          const timer = timers.get(timerId);
+          if (timer) {
+            fragment.appendChild(createTimerCard(timer, index));
+          }
+        } else if (isEditMode) {
+          fragment.appendChild(createDropSlot(index));
+        } else {
+          fragment.appendChild(createSlotPlaceholder());
+        }
+      });
 
-    if (isEditMode) {
-      fragment.appendChild(createDropSlot(slotLayout.length));
+      if (isEditMode) {
+        fragment.appendChild(createDropSlot(slotLayout.length));
+      }
     }
   }
 
   timerListElement.appendChild(fragment);
   updateTimerDisplays();
+  if (isViewMode) {
+    applyViewModeLayout();
+  }
 }
 
 function createDropSlot(index) {
@@ -1358,6 +1748,7 @@ async function deleteTimer(id) {
       if (Number.isInteger(numericId)) {
         removeTimerShortcut(numericId);
         timers.delete(numericId);
+        removeViewModePosition(numericId);
       }
       renderTimers();
     }
@@ -1370,6 +1761,9 @@ function toggleEditMode() {
   if (isShortcutMode) {
     exitShortcutMode({ shouldRender: false });
   }
+  if (!isEditMode && isViewMode) {
+    toggleViewMode();
+  }
   isEditMode = !isEditMode;
   if (!isEditMode) {
     draggedTimerId = null;
@@ -1379,6 +1773,31 @@ function toggleEditMode() {
   }
   updateGridSettingsVisibility();
   clearDropIndicators();
+  renderTimers();
+}
+
+function updateViewModeButtonState() {
+  if (!toggleViewModeButton) {
+    return;
+  }
+  toggleViewModeButton.textContent = isViewMode ? '보기 모드 종료' : '보기 모드';
+  toggleViewModeButton.setAttribute('aria-pressed', isViewMode ? 'true' : 'false');
+}
+
+function toggleViewMode() {
+  const nextState = !isViewMode;
+  if (nextState) {
+    if (isEditMode) {
+      toggleEditMode();
+    }
+    if (isShortcutMode) {
+      exitShortcutMode({ shouldRender: false });
+    }
+  } else {
+    cancelActiveViewModeDrag();
+  }
+  isViewMode = nextState;
+  updateViewModeButtonState();
   renderTimers();
 }
 
@@ -1605,6 +2024,10 @@ if (shortcutButton) {
   shortcutButton.addEventListener('click', () => toggleShortcutMode());
 }
 
+if (toggleViewModeButton) {
+  toggleViewModeButton.addEventListener('click', () => toggleViewMode());
+}
+
 if (gridColumnsInput) {
   ['change', 'input'].forEach((eventName) => {
     gridColumnsInput.addEventListener(eventName, handleGridSettingsChange);
@@ -1617,9 +2040,20 @@ if (gridRowsInput) {
   });
 }
 
+loadViewModePositions();
 loadShortcutAssignments();
 updateShortcutButtonState();
+updateViewModeButtonState();
 document.addEventListener('keydown', handleGlobalShortcutKeydown);
+
+window.addEventListener('pointermove', handleViewModePointerMove);
+window.addEventListener('pointerup', handleViewModePointerUp);
+window.addEventListener('pointercancel', handleViewModePointerUp);
+window.addEventListener('resize', () => {
+  if (isViewMode) {
+    updateViewModeCanvasSize();
+  }
+});
 
 syncGridSettingsInputs();
 updateGridSettingsVisibility();
