@@ -53,6 +53,7 @@ function createTimerPayload(timer, now = Date.now()) {
     remaining,
     isRunning: timer.isRunning,
     repeatEnabled: timer.repeatEnabled,
+    swipeToReset: Boolean(timer.swipeToReset),
     displayOrder: timer.displayOrder ?? timer.id,
     endTime: timer.isRunning ? timer.endTime : null,
     updatedAt: now,
@@ -129,13 +130,14 @@ async function persistTimer(timer) {
   const remainingMs = Math.max(0, Math.floor(timer.remainingMs ?? 0));
   const endTime = typeof timer.endTime === 'number' ? Math.floor(timer.endTime) : null;
   await pool.query(
-    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, end_time = ?, display_order = ? WHERE id = ?`,
+    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, swipe_to_reset = ?, end_time = ?, display_order = ? WHERE id = ?`,
     [
       timer.name,
       Math.floor(timer.durationMs),
       remainingMs,
       timer.isRunning ? 1 : 0,
       timer.repeatEnabled ? 1 : 0,
+      timer.swipeToReset ? 1 : 0,
       endTime,
       timer.displayOrder ?? 0,
       timer.id,
@@ -150,7 +152,7 @@ async function createTimerInDatabase({ name, durationMs }) {
   const [rows] = await pool.query('SELECT COALESCE(MAX(display_order), -1) AS maxOrder FROM timers');
   const nextOrder = Number(rows?.[0]?.maxOrder ?? -1) + 1;
   const [result] = await pool.query(
-    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time, display_order) VALUES (?, ?, ?, 0, 0, NULL, ?)`,
+    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order) VALUES (?, ?, ?, 0, 0, 0, NULL, ?)`,
     [name, Math.floor(durationMs), Math.floor(durationMs), nextOrder],
   );
   return { id: result.insertId, displayOrder: nextOrder };
@@ -192,7 +194,7 @@ async function loadTimersFromDatabase() {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, end_time, display_order FROM timers ORDER BY display_order ASC, id ASC`,
+    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order FROM timers ORDER BY display_order ASC, id ASC`,
   );
 
   const now = Date.now();
@@ -209,6 +211,7 @@ async function loadTimersFromDatabase() {
       remainingMs: Math.max(0, Number(row.remaining_ms) || duration),
       isRunning: Boolean(row.is_running),
       repeatEnabled: Boolean(row.repeat_enabled),
+      swipeToReset: Boolean(row.swipe_to_reset),
       displayOrder: Number.isFinite(row.display_order) ? Number(row.display_order) : row.id,
       endTime: typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null,
       updatedAt: now,
@@ -249,6 +252,7 @@ async function loadTimersFromDatabase() {
       remainingMs: duration,
       isRunning: false,
       repeatEnabled: false,
+      swipeToReset: false,
       displayOrder,
       endTime: null,
       updatedAt: now,
@@ -289,6 +293,7 @@ async function initializeDatabase() {
       remaining_ms INT NOT NULL,
       is_running TINYINT(1) NOT NULL DEFAULT 0,
       repeat_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      swipe_to_reset TINYINT(1) NOT NULL DEFAULT 0,
       display_order INT NOT NULL DEFAULT 0,
       end_time BIGINT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -308,6 +313,15 @@ async function initializeDatabase() {
   if (displayOrderColumn.length === 0) {
     await connection.query(
       'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
+    );
+  }
+
+  const [swipeColumn] = await connection.query(
+    "SHOW COLUMNS FROM timers LIKE 'swipe_to_reset'",
+  );
+  if (swipeColumn.length === 0) {
+    await connection.query(
+      'ALTER TABLE timers ADD COLUMN swipe_to_reset TINYINT(1) NOT NULL DEFAULT 0 AFTER repeat_enabled',
     );
   }
 
@@ -521,6 +535,7 @@ app.post('/api/timers', async (req, res) => {
       remainingMs: duration,
       isRunning: false,
       repeatEnabled: false,
+      swipeToReset: false,
       displayOrder,
       endTime: null,
       updatedAt: now,
@@ -541,7 +556,7 @@ app.put('/api/timers/:id', async (req, res) => {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
 
-  const { name, duration } = req.body ?? {};
+  const { name, duration, swipeToReset } = req.body ?? {};
   const now = Date.now();
 
   if (typeof name === 'string' && name.trim().length > 0) {
@@ -554,6 +569,10 @@ app.put('/api/timers/:id', async (req, res) => {
     timer.remainingMs = safeDuration;
     timer.isRunning = false;
     timer.endTime = null;
+  }
+
+  if (typeof swipeToReset === 'boolean') {
+    timer.swipeToReset = swipeToReset;
   }
 
   timer.updatedAt = now;

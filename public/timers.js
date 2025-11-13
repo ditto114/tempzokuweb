@@ -9,23 +9,260 @@ const toggleEditButton = document.getElementById('toggle-edit-mode');
 const gridSettingsPanel = document.getElementById('timer-grid-settings');
 const gridColumnsInput = document.getElementById('timer-grid-columns');
 const gridRowsInput = document.getElementById('timer-grid-rows');
+const shortcutButton = document.getElementById('timer-shortcut-button');
 
 const timers = new Map();
 const timerDisplays = new Map();
 const timerProgressBars = new Map();
 
+const SHORTCUT_COOKIE_NAME = 'timer_shortcuts';
+const SHORTCUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const BLOCKED_SHORTCUT_KEYS = new Set([
+  'Shift',
+  'Control',
+  'Alt',
+  'Meta',
+  'Escape',
+  'Backspace',
+  'Delete',
+  'Tab',
+  'CapsLock',
+  'NumLock',
+  'ScrollLock',
+]);
+
+const shortcutAssignments = new Map();
+const shortcutKeyToTimer = new Map();
+
 let eventSource = null;
 let isEditMode = false;
+let isShortcutMode = false;
 let draggedTimerId = null;
 let slotLayout = [];
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
 let gridSettings = { ...DEFAULT_GRID_SETTINGS };
+let serverClockOffsetMs = 0;
+let hasServerClockOffset = false;
+let pendingShortcutTimerId = null;
+let shortcutModalElements = null;
+let shortcutModalKeyListener = null;
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
     return DEFAULT_TIMER_DURATION_MS;
   }
   return Math.min(Math.max(value, MIN_TIMER_DURATION_MS), MAX_TIMER_DURATION_MS);
+}
+
+function normalizeShortcutValue(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  if (BLOCKED_SHORTCUT_KEYS.has(value)) {
+    return null;
+  }
+  if (value === ' ') {
+    return 'Space';
+  }
+  if (value.length === 1) {
+    return value.toUpperCase();
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || BLOCKED_SHORTCUT_KEYS.has(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function getTimerShortcut(timerId) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return null;
+  }
+  return shortcutAssignments.get(id) ?? null;
+}
+
+function formatActionLabel(baseText, timerId) {
+  const shortcut = getTimerShortcut(timerId);
+  if (!shortcut) {
+    return baseText;
+  }
+  return `${baseText} (${shortcut})`;
+}
+
+function persistShortcutAssignments() {
+  try {
+    const payload = {};
+    shortcutAssignments.forEach((value, id) => {
+      payload[id] = value;
+    });
+    const encoded = encodeURIComponent(JSON.stringify(payload));
+    document.cookie = `${SHORTCUT_COOKIE_NAME}=${encoded};path=/;max-age=${SHORTCUT_COOKIE_MAX_AGE};samesite=lax`;
+  } catch (error) {
+    console.error('Failed to persist timer shortcuts:', error);
+  }
+}
+
+function loadShortcutAssignments() {
+  shortcutAssignments.clear();
+  shortcutKeyToTimer.clear();
+  const cookieString = document.cookie || '';
+  const prefix = `${SHORTCUT_COOKIE_NAME}=`;
+  const parts = cookieString.split(';');
+  let storedValue = null;
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      storedValue = trimmed.slice(prefix.length);
+      break;
+    }
+  }
+  if (!storedValue) {
+    return;
+  }
+  try {
+    const decoded = decodeURIComponent(storedValue);
+    const parsed = JSON.parse(decoded);
+    let needsPersist = false;
+    if (parsed && typeof parsed === 'object') {
+      Object.entries(parsed).forEach(([idKey, keyValue]) => {
+        const id = Number(idKey);
+        if (!Number.isInteger(id) || typeof keyValue !== 'string') {
+          needsPersist = true;
+          return;
+        }
+        const normalized = normalizeShortcutValue(keyValue);
+        if (!normalized) {
+          needsPersist = true;
+          return;
+        }
+        if (shortcutKeyToTimer.has(normalized)) {
+          needsPersist = true;
+          return;
+        }
+        shortcutAssignments.set(id, normalized);
+        shortcutKeyToTimer.set(normalized, id);
+      });
+    }
+    if (needsPersist) {
+      persistShortcutAssignments();
+    }
+  } catch (error) {
+    console.error('Failed to load timer shortcuts:', error);
+    shortcutAssignments.clear();
+    shortcutKeyToTimer.clear();
+    persistShortcutAssignments();
+  }
+}
+
+function removeTimerShortcut(timerId, { persist = true } = {}) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return false;
+  }
+  const existingKey = shortcutAssignments.get(id);
+  if (!existingKey) {
+    return false;
+  }
+  shortcutAssignments.delete(id);
+  if (shortcutKeyToTimer.get(existingKey) === id) {
+    shortcutKeyToTimer.delete(existingKey);
+  }
+  if (persist) {
+    persistShortcutAssignments();
+  }
+  return true;
+}
+
+function setTimerShortcut(timerId, rawKey) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return;
+  }
+  const normalized = normalizeShortcutValue(rawKey);
+  if (!normalized) {
+    return;
+  }
+  const currentKey = shortcutAssignments.get(id);
+  if (currentKey === normalized) {
+    return;
+  }
+  const previousOwner = shortcutKeyToTimer.get(normalized);
+  if (Number.isInteger(previousOwner) && previousOwner !== id) {
+    removeTimerShortcut(previousOwner, { persist: false });
+  }
+  if (currentKey && currentKey !== normalized) {
+    shortcutKeyToTimer.delete(currentKey);
+  }
+  shortcutAssignments.set(id, normalized);
+  shortcutKeyToTimer.set(normalized, id);
+  persistShortcutAssignments();
+  renderTimers();
+}
+
+function clearTimerShortcut(timerId) {
+  const removed = removeTimerShortcut(timerId, { persist: false });
+  if (removed) {
+    persistShortcutAssignments();
+    renderTimers();
+  }
+}
+
+function pruneShortcutAssignments() {
+  let changed = false;
+  shortcutAssignments.forEach((_, id) => {
+    if (!timers.has(id)) {
+      if (removeTimerShortcut(id, { persist: false })) {
+        changed = true;
+      }
+    }
+  });
+  if (changed) {
+    persistShortcutAssignments();
+  }
+}
+
+function updateShortcutButtonState() {
+  if (!shortcutButton) {
+    return;
+  }
+  shortcutButton.classList.toggle('timer-shortcut-button-active', isShortcutMode);
+  shortcutButton.setAttribute('aria-pressed', String(isShortcutMode));
+  shortcutButton.textContent = isShortcutMode ? '단축키 설정 완료' : '단축키';
+}
+
+function getEffectiveNow(now = Date.now()) {
+  if (!hasServerClockOffset) {
+    return now;
+  }
+  return now + serverClockOffsetMs;
+}
+
+function updateServerClockOffsetFromTimers(payload, receiveTime = Date.now()) {
+  const collection = Array.isArray(payload) ? payload : [payload];
+  const timestamps = [];
+  collection.forEach((item) => {
+    if (!item) {
+      return;
+    }
+    const numeric = Number(item.updatedAt);
+    if (Number.isFinite(numeric)) {
+      timestamps.push(numeric);
+    }
+  });
+  if (timestamps.length === 0) {
+    return;
+  }
+  const total = timestamps.reduce((sum, value) => sum + value, 0);
+  const average = total / timestamps.length;
+  const nextOffset = average - receiveTime;
+  if (!hasServerClockOffset) {
+    serverClockOffsetMs = nextOffset;
+    hasServerClockOffset = true;
+    return;
+  }
+  const SMOOTHING_FACTOR = 0.2;
+  serverClockOffsetMs += (nextOffset - serverClockOffsetMs) * SMOOTHING_FACTOR;
 }
 
 function formatTimerDisplay(ms) {
@@ -48,12 +285,184 @@ function updateStatus(message, isError = false) {
   }
 }
 
+function ensureShortcutModalElements() {
+  if (shortcutModalElements) {
+    return shortcutModalElements;
+  }
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop hidden';
+  const modal = document.createElement('div');
+  modal.className = 'modal hidden';
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+
+  const message = document.createElement('p');
+  message.className = 'shortcut-modal-message';
+  message.textContent = '키를 입력하세요';
+
+  const hint = document.createElement('p');
+  hint.className = 'shortcut-modal-hint';
+  hint.textContent = '원하는 키를 눌러주세요. Esc로 취소, Backspace로 해제.';
+
+  content.appendChild(message);
+  content.appendChild(hint);
+  modal.appendChild(content);
+  document.body.appendChild(backdrop);
+  document.body.appendChild(modal);
+
+  backdrop.addEventListener('click', () => {
+    closeShortcutModal();
+  });
+
+  shortcutModalElements = { backdrop, modal, message, hint };
+  return shortcutModalElements;
+}
+
+function closeShortcutModal() {
+  if (shortcutModalKeyListener) {
+    window.removeEventListener('keydown', shortcutModalKeyListener, true);
+    shortcutModalKeyListener = null;
+  }
+  if (!shortcutModalElements) {
+    pendingShortcutTimerId = null;
+    return;
+  }
+  const { backdrop, modal } = shortcutModalElements;
+  backdrop.classList.add('hidden');
+  modal.classList.add('hidden');
+  pendingShortcutTimerId = null;
+}
+
+function openShortcutModal(timerId) {
+  const id = Number(timerId);
+  if (!Number.isInteger(id)) {
+    return;
+  }
+  const elements = ensureShortcutModalElements();
+  const timer = timers.get(id);
+  if (elements.message) {
+    elements.message.textContent = timer
+      ? `${timer.name} 타이머의 단축키를 입력하세요`
+      : '키를 입력하세요';
+  }
+  if (elements.hint) {
+    elements.hint.textContent = '원하는 키를 눌러주세요. Esc로 취소, Backspace로 해제.';
+  }
+  elements.backdrop.classList.remove('hidden');
+  elements.modal.classList.remove('hidden');
+  pendingShortcutTimerId = id;
+
+  if (shortcutModalKeyListener) {
+    window.removeEventListener('keydown', shortcutModalKeyListener, true);
+  }
+
+  shortcutModalKeyListener = (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeShortcutModal();
+      return;
+    }
+    if (!Number.isInteger(pendingShortcutTimerId)) {
+      return;
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      event.preventDefault();
+      const targetId = pendingShortcutTimerId;
+      closeShortcutModal();
+      clearTimerShortcut(targetId);
+      return;
+    }
+    const normalized = normalizeShortcutValue(event.key);
+    if (!normalized) {
+      return;
+    }
+    event.preventDefault();
+    const targetId = pendingShortcutTimerId;
+    closeShortcutModal();
+    setTimerShortcut(targetId, normalized);
+  };
+
+  window.addEventListener('keydown', shortcutModalKeyListener, true);
+}
+
+function enterShortcutMode() {
+  if (isShortcutMode) {
+    return;
+  }
+  isShortcutMode = true;
+  pendingShortcutTimerId = null;
+  updateShortcutButtonState();
+  renderTimers();
+}
+
+function exitShortcutMode({ shouldRender = true } = {}) {
+  if (!isShortcutMode) {
+    closeShortcutModal();
+    return;
+  }
+  isShortcutMode = false;
+  closeShortcutModal();
+  updateShortcutButtonState();
+  if (shouldRender) {
+    renderTimers();
+  }
+}
+
+function toggleShortcutMode() {
+  if (!isShortcutMode && isEditMode) {
+    toggleEditMode();
+  }
+  if (isShortcutMode) {
+    exitShortcutMode();
+  } else {
+    enterShortcutMode();
+  }
+}
+
+function handleGlobalShortcutKeydown(event) {
+  if (isShortcutMode || pendingShortcutTimerId != null) {
+    return;
+  }
+  if (event.metaKey || event.ctrlKey || event.altKey) {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof HTMLElement) {
+    const interactive = target.closest('input, textarea, select, [contenteditable="true"], button');
+    if (interactive && !(interactive instanceof HTMLButtonElement)) {
+      return;
+    }
+  }
+  const normalized = normalizeShortcutValue(event.key);
+  if (!normalized) {
+    return;
+  }
+  const timerId = shortcutKeyToTimer.get(normalized);
+  if (!Number.isInteger(timerId)) {
+    return;
+  }
+  const timer = timers.get(timerId);
+  if (!timer) {
+    return;
+  }
+  event.preventDefault();
+  if (timer.isRunning) {
+    resetTimer(timerId);
+  } else {
+    startTimer(timerId);
+  }
+}
+
 function getTimerRemaining(timer, now = Date.now()) {
   if (!timer) {
     return 0;
   }
   if (timer.isRunning && typeof timer.endTime === 'number') {
-    return Math.max(0, timer.endTime - now);
+    const effectiveNow = getEffectiveNow(now);
+    return Math.max(0, timer.endTime - effectiveNow);
   }
   return Math.max(0, timer.remainingMs);
 }
@@ -70,6 +479,7 @@ function normalizeTimer(raw) {
     remainingMs: remaining,
     isRunning: Boolean(raw.isRunning),
     repeatEnabled: Boolean(raw.repeatEnabled),
+    swipeToReset: Boolean(raw.swipeToReset),
     displayOrder: Number.isFinite(raw.displayOrder) ? Number(raw.displayOrder) : Number(raw.id),
     endTime: Number.isFinite(endTime) ? endTime : null,
     updatedAt: raw.updatedAt != null ? Number(raw.updatedAt) : Date.now(),
@@ -196,14 +606,21 @@ function applyTimerState(state) {
 }
 
 function applyTimerList(list) {
+  if (!Array.isArray(list)) {
+    return;
+  }
+  updateServerClockOffsetFromTimers(list);
   timers.clear();
-  sortTimersForDisplay(list.map((item) => normalizeTimer(item))).forEach((timer) => {
+  const normalizedTimers = list.map((item) => normalizeTimer(item));
+  sortTimersForDisplay(normalizedTimers).forEach((timer) => {
     timers.set(timer.id, timer);
   });
+  pruneShortcutAssignments();
   renderTimers();
 }
 
 function applyTimerUpdate(timerData) {
+  updateServerClockOffsetFromTimers(timerData);
   const timer = normalizeTimer(timerData);
   timers.set(timer.id, timer);
   renderTimers();
@@ -301,6 +718,43 @@ function createTimerCard(timer, slotIndex) {
       minuteInput,
       secondInput,
     });
+
+    const options = document.createElement('div');
+    options.className = 'timer-card-options';
+
+    const swipeLabel = document.createElement('label');
+    swipeLabel.className = 'timer-card-option';
+    const swipeCheckbox = document.createElement('input');
+    swipeCheckbox.type = 'checkbox';
+    swipeCheckbox.checked = Boolean(timer.swipeToReset);
+    const swipeText = document.createElement('span');
+    swipeText.textContent = '밀어서 리셋';
+    swipeLabel.appendChild(swipeCheckbox);
+    swipeLabel.appendChild(swipeText);
+    options.appendChild(swipeLabel);
+    info.appendChild(options);
+
+    let isUpdatingSwipe = false;
+    swipeCheckbox.addEventListener('change', async () => {
+      if (isUpdatingSwipe) {
+        return;
+      }
+      const previousValue = Boolean(timer.swipeToReset);
+      const desiredValue = Boolean(swipeCheckbox.checked);
+      if (previousValue === desiredValue) {
+        return;
+      }
+      isUpdatingSwipe = true;
+      timer.swipeToReset = desiredValue;
+      try {
+        await updateTimer(timer.id, { swipeToReset: desiredValue });
+      } catch (error) {
+        timer.swipeToReset = previousValue;
+        swipeCheckbox.checked = previousValue;
+      } finally {
+        isUpdatingSwipe = false;
+      }
+    });
   } else {
     display.className = 'timer-card-display';
     display.textContent = formatTimerDisplay(remaining);
@@ -340,17 +794,35 @@ function createTimerCard(timer, slotIndex) {
     deleteButton.textContent = '삭제';
     deleteButton.addEventListener('click', () => deleteTimer(timer.id));
     actionElement = deleteButton;
+  } else if (isShortcutMode) {
+    const assignButton = document.createElement('button');
+    assignButton.type = 'button';
+    assignButton.className = 'timer-card-action timer-shortcut-assign-button';
+    assignButton.textContent = '이 곳을 눌러 단축키 설정';
+    assignButton.addEventListener('click', () => openShortcutModal(timer.id));
+    actionElement = assignButton;
   } else if (timer.isRunning) {
-    const resetContainer = document.createElement('div');
-    resetContainer.className = 'timer-card-action timer-card-reset-area';
-    resetContainer.classList.add('is-running');
-    resetContainer.appendChild(createResetSlider(timer));
-    actionElement = resetContainer;
+    if (timer.swipeToReset) {
+      const resetContainer = document.createElement('div');
+      resetContainer.className = 'timer-card-action timer-card-reset-area';
+      resetContainer.classList.add('is-running');
+      resetContainer.appendChild(
+        createResetSlider(timer, { labelText: formatActionLabel('밀어서 타이머 리셋', timer.id) }),
+      );
+      actionElement = resetContainer;
+    } else {
+      const resetButton = document.createElement('button');
+      resetButton.type = 'button';
+      resetButton.className = 'timer-card-action secondary';
+      resetButton.textContent = formatActionLabel('리셋', timer.id);
+      resetButton.addEventListener('click', () => resetTimer(timer.id));
+      actionElement = resetButton;
+    }
   } else {
     const startButton = document.createElement('button');
     startButton.type = 'button';
     startButton.className = 'timer-card-action primary';
-    startButton.textContent = '시작';
+    startButton.textContent = formatActionLabel('시작', timer.id);
     startButton.addEventListener('click', () => startTimer(timer.id));
     actionElement = startButton;
   }
@@ -499,13 +971,13 @@ function attachInlineEditor(timer, { nameInput, minuteInput, secondInput }) {
   });
 }
 
-function createResetSlider(timer) {
+function createResetSlider(timer, { labelText } = {}) {
   const slider = document.createElement('div');
   slider.className = 'timer-reset-slider';
 
   const label = document.createElement('span');
   label.className = 'timer-reset-label';
-  label.textContent = '밀어서 타이머 리셋';
+  label.textContent = labelText || '밀어서 타이머 리셋';
 
   const knob = document.createElement('button');
   knob.type = 'button';
@@ -700,6 +1172,7 @@ function renderTimers() {
     return;
   }
 
+  pruneShortcutAssignments();
   applyGridSettings();
   clearTimerDisplays();
   timerListElement.innerHTML = '';
@@ -881,7 +1354,11 @@ async function deleteTimer(id) {
     if (response) {
       applyTimerState(response);
     } else {
-      timers.delete(Number(id));
+      const numericId = Number(id);
+      if (Number.isInteger(numericId)) {
+        removeTimerShortcut(numericId);
+        timers.delete(numericId);
+      }
       renderTimers();
     }
   } catch (error) {
@@ -890,6 +1367,9 @@ async function deleteTimer(id) {
 }
 
 function toggleEditMode() {
+  if (isShortcutMode) {
+    exitShortcutMode({ shouldRender: false });
+  }
   isEditMode = !isEditMode;
   if (!isEditMode) {
     draggedTimerId = null;
@@ -1121,6 +1601,10 @@ if (toggleEditButton) {
   toggleEditButton.addEventListener('click', () => toggleEditMode());
 }
 
+if (shortcutButton) {
+  shortcutButton.addEventListener('click', () => toggleShortcutMode());
+}
+
 if (gridColumnsInput) {
   ['change', 'input'].forEach((eventName) => {
     gridColumnsInput.addEventListener(eventName, handleGridSettingsChange);
@@ -1132,6 +1616,10 @@ if (gridRowsInput) {
     gridRowsInput.addEventListener(eventName, handleGridSettingsChange);
   });
 }
+
+loadShortcutAssignments();
+updateShortcutButtonState();
+document.addEventListener('keydown', handleGlobalShortcutKeydown);
 
 syncGridSettingsInputs();
 updateGridSettingsVisibility();
