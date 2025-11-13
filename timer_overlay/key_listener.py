@@ -23,7 +23,7 @@ class GlobalKeyListener(QObject):
         if self._handler is not None:
             return
         try:
-            self._handler = keyboard.on_press_key("q", self._handle_key_event)
+            self._handler = keyboard.on_press(self._handle_key_event)
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("전역 키 후킹을 시작하지 못했습니다: %s", exc)
             self._handler = None
