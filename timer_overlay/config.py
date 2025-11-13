@@ -2,40 +2,48 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+logger = logging.getLogger(__name__)
+
 CONFIG_FILE_NAME = "timer_overlay_config.json"
 
 
 def _default_config_path() -> Path:
-    """사용자 홈 디렉터리에 위치한 설정 파일 경로를 반환한다."""
-    # Windows 의 Git Bash 와 같이 ``HOME=/c/Users/foo`` 형태로 설정된 환경에서는
-    # ``Path.home()`` 이 ``/c/Users/foo`` (즉 ``C:\\c\\Users\\foo``) 를 반환한다. 이
-    # 경로는 실제 사용자 홈 디렉터리가 아니므로 설정 파일이 예상치 못한 곳에
-    # 생성되거나, 아예 저장에 실패한다. 이를 방지하기 위해 ``Path.home()`` 가 가리키는
-    # 경로가 존재하지 않을 경우 Windows 전용 환경 변수 ``USERPROFILE`` 혹은
-    # ``HOMEDRIVE``/``HOMEPATH`` 를 활용해 올바른 홈 경로를 재계산한다.
-    home = Path.home()
+    """설정 파일을 저장할 기본 경로를 계산한다."""
 
-    if not home.exists() and os.name == "nt":
-        user_profile = os.environ.get("USERPROFILE")
-        if user_profile:
-            candidate = Path(user_profile)
-            if candidate.exists():
-                home = candidate
-        else:
-            drive = os.environ.get("HOMEDRIVE")
-            path = os.environ.get("HOMEPATH")
-            if drive and path:
-                candidate = Path(drive + path)
-                if candidate.exists():
-                    home = candidate
+    # ``Path.cwd()`` 를 그대로 사용할 경우 Git Bash 같은 환경에서는 ``/c/...`` 처럼
+    # Windows 가 이해하지 못하는 경로가 전달될 수 있다. ``resolve()`` 를 거치면
+    # 플랫폼에 맞는 절대 경로로 변환되므로, 이후 파일을 생성할 때 실패하지 않는다.
+    try:
+        working_dir = Path.cwd().resolve()
+    except OSError:
+        working_dir = None
 
-    return home / CONFIG_FILE_NAME
+    # 실행 디렉터리에 쓰기 권한이 없다면(예: 읽기 전용 미디어에서 실행) 패키지 루트
+    # 위치로 폴백한다. ``config.py`` 는 ``timer_overlay`` 패키지 바로 아래에 위치하므로
+    # 한 단계 상위 폴더가 프로젝트 루트가 된다.
+    package_dir = Path(__file__).resolve().parent
+    project_root = package_dir.parent
+
+    candidates = []
+    if working_dir:
+        candidates.append(working_dir)
+    candidates.append(project_root)
+    candidates.append(package_dir)
+
+    for base in candidates:
+        if base.exists() and base.is_dir() and os.access(base, os.W_OK):
+            return base / CONFIG_FILE_NAME
+
+    # 모든 후보가 실패할 경우 마지막 수단으로 사용자 홈 디렉터리를 사용한다.
+    return Path.home() / CONFIG_FILE_NAME
 
 
 @dataclass
@@ -102,6 +110,7 @@ class ConfigStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _default_config_path()
         self._lock = threading.Lock()
+        logger.debug("설정 파일 경로: %s", self._path)
 
     @property
     def path(self) -> Path:
