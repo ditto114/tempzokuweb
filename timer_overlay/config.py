@@ -7,10 +7,9 @@ import os
 import platform
 import tempfile
 import threading
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +54,6 @@ def _is_writable_directory(path: Path) -> bool:
 def _default_config_path() -> Path:
     """설정 파일을 저장할 기본 경로를 계산한다."""
 
-    # ``Path.cwd()`` 를 그대로 사용할 경우 Git Bash 같은 환경에서는 ``/c/...`` 처럼
-    # Windows 가 이해하지 못하는 경로가 전달될 수 있다. ``resolve()`` 를 거치면
-    # 플랫폼에 맞는 절대 경로로 변환되므로, 이후 파일을 생성할 때 실패하지 않는다.
     try:
         working_dir = Path.cwd().resolve()
     except OSError:
@@ -66,7 +62,7 @@ def _default_config_path() -> Path:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
 
-    candidates: List[Path] = []
+    candidates: list[Path] = []
     if working_dir:
         candidates.append(working_dir)
 
@@ -85,44 +81,18 @@ def _default_config_path() -> Path:
             return base / CONFIG_FILE_NAME
         logger.debug("설정 경로 후보 %s 는 쓰기 불가", base)
 
-    # 모든 후보가 실패할 경우 마지막 수단으로 사용자 홈 디렉터리를 사용한다.
     home_dir = Path.home()
     if not _is_writable_directory(home_dir):
         raise PermissionError("설정을 저장할 수 있는 디렉터리를 찾지 못했습니다.")
     return home_dir / CONFIG_FILE_NAME
 
 
-@dataclass
-class TimerConfig:
-    """단일 타이머에 대한 설정."""
-
-    id: str
-    name: str
-    duration_seconds: int
-    start_hotkey: str
-    reset_hotkey: str
-    position: Tuple[int, int] = (100, 100)
-
-    @classmethod
-    def from_dict(cls, data: Dict) -> "TimerConfig":
-        return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            name=data.get("name", "Timer"),
-            duration_seconds=int(data.get("duration_seconds", 60)),
-            start_hotkey=data.get("start_hotkey", "<ctrl>+<alt>+1"),
-            reset_hotkey=data.get("reset_hotkey", "<ctrl>+<alt>+<shift>+1"),
-            position=tuple(data.get("position", (100, 100))),
-        )
-
-    def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "duration_seconds": self.duration_seconds,
-            "start_hotkey": self.start_hotkey,
-            "reset_hotkey": self.reset_hotkey,
-            "position": list(self.position),
-        }
+def _parse_position(raw: Iterable[int | float]) -> Tuple[int, int] | None:
+    try:
+        x, y = list(raw)[:2]
+        return int(x), int(y)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -130,23 +100,40 @@ class AppConfig:
     """애플리케이션 전역 설정."""
 
     server_host: str = "localhost"
-    server_port: int = 8000
-    timers: List[TimerConfig] = field(default_factory=list)
+    server_port: int = 47984
+    timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "AppConfig":
-        timers = [TimerConfig.from_dict(item) for item in data.get("timers", [])]
+        timer_positions: Dict[str, Tuple[int, int]] = {}
+
+        if isinstance(data.get("timer_positions"), dict):
+            for timer_id, raw_position in data["timer_positions"].items():
+                parsed = _parse_position(raw_position)
+                if parsed is not None:
+                    timer_positions[str(timer_id)] = parsed
+
+        # 레거시 형식 지원: timers 리스트에 위치 정보가 포함되어 있는 경우
+        elif isinstance(data.get("timers"), list):
+            for item in data["timers"]:
+                timer_id = item.get("id")
+                if not timer_id:
+                    continue
+                parsed = _parse_position(item.get("position", (100, 100)))
+                if parsed is not None:
+                    timer_positions[str(timer_id)] = parsed
+
         return cls(
             server_host=data.get("server_host", "localhost"),
-            server_port=int(data.get("server_port", 8000)),
-            timers=timers,
+            server_port=int(data.get("server_port", 47984)),
+            timer_positions=timer_positions,
         )
 
     def to_dict(self) -> Dict:
         return {
             "server_host": self.server_host,
             "server_port": self.server_port,
-            "timers": [timer.to_dict() for timer in self.timers],
+            "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
         }
 
 
@@ -220,14 +207,4 @@ class ConfigStore:
 
     @staticmethod
     def _create_default_config() -> AppConfig:
-        default = AppConfig()
-        default.timers.append(
-            TimerConfig(
-                id=str(uuid.uuid4()),
-                name="Timer 1",
-                duration_seconds=300,
-                start_hotkey="<ctrl>+<alt>+1",
-                reset_hotkey="<ctrl>+<alt>+<shift>+1",
-            )
-        )
-        return default
+        return AppConfig()
