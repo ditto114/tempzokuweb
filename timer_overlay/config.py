@@ -13,11 +13,28 @@ CONFIG_FILE_NAME = "timer_overlay_config.json"
 
 def _default_config_path() -> Path:
     """사용자 홈 디렉터리에 위치한 설정 파일 경로를 반환한다."""
-    # ``Path.home()`` 는 Windows, macOS, Linux 에서 각각의 홈 디렉터리를 정확하게
-    # 찾아준다. Git Bash 와 같이 POSIX 스타일의 ``HOME`` 환경 변수가 설정된 경우에도
-    # ``Path.home()`` 는 ``C:\Users\name`` 형태로 변환해 주기 때문에, ``/c/Users`` 처럼
-    # Windows 에서 유효하지 않은 경로로 저장되는 문제를 방지한다.
+    # Windows 의 Git Bash 와 같이 ``HOME=/c/Users/foo`` 형태로 설정된 환경에서는
+    # ``Path.home()`` 이 ``/c/Users/foo`` (즉 ``C:\\c\\Users\\foo``) 를 반환한다. 이
+    # 경로는 실제 사용자 홈 디렉터리가 아니므로 설정 파일이 예상치 못한 곳에
+    # 생성되거나, 아예 저장에 실패한다. 이를 방지하기 위해 ``Path.home()`` 가 가리키는
+    # 경로가 존재하지 않을 경우 Windows 전용 환경 변수 ``USERPROFILE`` 혹은
+    # ``HOMEDRIVE``/``HOMEPATH`` 를 활용해 올바른 홈 경로를 재계산한다.
     home = Path.home()
+
+    if not home.exists() and os.name == "nt":
+        user_profile = os.environ.get("USERPROFILE")
+        if user_profile:
+            candidate = Path(user_profile)
+            if candidate.exists():
+                home = candidate
+        else:
+            drive = os.environ.get("HOMEDRIVE")
+            path = os.environ.get("HOMEPATH")
+            if drive and path:
+                candidate = Path(drive + path)
+                if candidate.exists():
+                    home = candidate
+
     return home / CONFIG_FILE_NAME
 
 
