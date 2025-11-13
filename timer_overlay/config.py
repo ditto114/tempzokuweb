@@ -2,20 +2,59 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
+import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+logger = logging.getLogger(__name__)
+
 CONFIG_FILE_NAME = "timer_overlay_config.json"
 
 
 def _default_config_path() -> Path:
-    """사용자 홈 디렉터리에 위치한 설정 파일 경로를 반환한다."""
-    home = Path(os.path.expanduser("~"))
-    return home / CONFIG_FILE_NAME
+    """설정 파일을 저장할 기본 경로를 계산한다."""
+
+    # ``Path.cwd()`` 를 그대로 사용할 경우 Git Bash 같은 환경에서는 ``/c/...`` 처럼
+    # Windows 가 이해하지 못하는 경로가 전달될 수 있다. ``resolve()`` 를 거치면
+    # 플랫폼에 맞는 절대 경로로 변환되므로, 이후 파일을 생성할 때 실패하지 않는다.
+    try:
+        working_dir = Path.cwd().resolve()
+    except OSError:
+        working_dir = None
+
+    # 실행 디렉터리에 쓰기 권한이 없다면(예: 읽기 전용 미디어에서 실행) 패키지 루트
+    # 위치로 폴백한다. ``config.py`` 는 ``timer_overlay`` 패키지 바로 아래에 위치하므로
+    # 한 단계 상위 폴더가 프로젝트 루트가 된다.
+    package_dir = Path(__file__).resolve().parent
+    project_root = package_dir.parent
+
+    candidates = []
+    if working_dir:
+        candidates.append(working_dir)
+    candidates.append(project_root)
+    candidates.append(package_dir)
+
+    for base in candidates:
+        if not base.exists() or not base.is_dir():
+            continue
+
+        try:
+            # ``os.access`` 는 Windows/MSYS 조합에서 일관적으로 동작하지 않아 실제로
+            # 임시 파일을 만들 수 있는지 확인하여 쓰기 가능 여부를 판단한다.
+            with tempfile.NamedTemporaryFile(dir=base, delete=True):
+                pass
+        except (OSError, PermissionError):
+            logger.debug("설정 경로 후보 %s 는 쓰기 불가", base)
+            continue
+
+        return base / CONFIG_FILE_NAME
+
+    # 모든 후보가 실패할 경우 마지막 수단으로 사용자 홈 디렉터리를 사용한다.
+    return Path.home() / CONFIG_FILE_NAME
 
 
 @dataclass
@@ -82,6 +121,7 @@ class ConfigStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _default_config_path()
         self._lock = threading.Lock()
+        logger.debug("설정 파일 경로: %s", self._path)
 
     @property
     def path(self) -> Path:
