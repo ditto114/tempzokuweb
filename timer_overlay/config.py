@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -14,7 +13,11 @@ CONFIG_FILE_NAME = "timer_overlay_config.json"
 
 def _default_config_path() -> Path:
     """사용자 홈 디렉터리에 위치한 설정 파일 경로를 반환한다."""
-    home = Path(os.path.expanduser("~"))
+    # ``Path.home()`` 는 Windows, macOS, Linux 에서 각각의 홈 디렉터리를 정확하게
+    # 찾아준다. Git Bash 와 같이 POSIX 스타일의 ``HOME`` 환경 변수가 설정된 경우에도
+    # ``Path.home()`` 는 ``C:\Users\name`` 형태로 변환해 주기 때문에, ``/c/Users`` 처럼
+    # Windows 에서 유효하지 않은 경로로 저장되는 문제를 방지한다.
+    home = Path.home()
     return home / CONFIG_FILE_NAME
 
 
