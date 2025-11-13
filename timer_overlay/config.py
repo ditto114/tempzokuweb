@@ -99,9 +99,10 @@ def _parse_position(raw: Iterable[int | float]) -> Tuple[int, int] | None:
 class AppConfig:
     """애플리케이션 전역 설정."""
 
-    server_host: str = "localhost"
+    server_host: str = "218.234.230.188"
     server_port: int = 47984
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    timer_hotkeys: Dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict) -> "AppConfig":
@@ -124,9 +125,14 @@ class AppConfig:
                     timer_positions[str(timer_id)] = parsed
 
         return cls(
-            server_host=data.get("server_host", "localhost"),
+            server_host=data.get("server_host", "218.234.230.188"),
             server_port=int(data.get("server_port", 47984)),
             timer_positions=timer_positions,
+            timer_hotkeys={
+                str(key): str(value)
+                for key, value in data.get("timer_hotkeys", {}).items()
+                if isinstance(key, str)
+            },
         )
 
     def to_dict(self) -> Dict:
@@ -134,6 +140,7 @@ class AppConfig:
             "server_host": self.server_host,
             "server_port": self.server_port,
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
+            "timer_hotkeys": dict(self.timer_hotkeys),
         }
 
 
