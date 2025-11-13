@@ -6,10 +6,9 @@ import time
 from typing import Dict
 
 import requests
-from PyQt5.QtCore import QEvent, QPoint, QTimer, Qt
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtCore import QEvent, QTimer, Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
-    QAction,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -17,7 +16,6 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -27,14 +25,12 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QHeaderView,
-    QKeySequenceEdit,
 )
 
 from .config import AppConfig, ConfigStore
-from .hotkey_manager import HotkeyManager
+from .key_listener import GlobalKeyListener
 from .network import RemoteTimerState, ServerSettings, TimerService
 from .overlay_widget import TimerOverlayWidget
-from .utils import hotkey_to_display_text, qkeysequence_to_hotkey
 
 logger = logging.getLogger(__name__)
 
@@ -71,55 +67,6 @@ class ServerSettingsDialog(QDialog):
         return True
 
 
-class HotkeyDialog(QDialog):
-    """특정 타이머에 대한 글로벌 단축키를 설정하는 다이얼로그."""
-
-    def __init__(self, parent: QWidget | None, timer_name: str, current_hotkey: str):
-        super().__init__(parent)
-        self.setWindowTitle("단축키 설정")
-        self._result_hotkey = current_hotkey
-
-        description = QLabel(
-            f"'{timer_name}' 타이머에 사용할 단축키를 입력하세요."
-        )
-        description.setWordWrap(True)
-
-        self.sequence_edit = QKeySequenceEdit()
-        display_text = hotkey_to_display_text(current_hotkey)
-        if display_text:
-            self.sequence_edit.setKeySequence(QKeySequence(display_text))
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        clear_button = QPushButton("해제")
-        button_box.addButton(clear_button, QDialogButtonBox.ResetRole)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        clear_button.clicked.connect(self._clear_hotkey)
-
-        layout = QVBoxLayout()
-        layout.addWidget(description)
-        layout.addWidget(self.sequence_edit)
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def accept(self) -> None:  # type: ignore[override]
-        sequence = self.sequence_edit.keySequence()
-        sequence_text = sequence.toString(QKeySequence.PortableText)
-        if sequence.count() > 1 or "," in sequence_text:
-            QMessageBox.warning(self, "단축키", "단일 단축키만 설정할 수 있습니다.")
-            return
-        self._result_hotkey = qkeysequence_to_hotkey(sequence)
-        super().accept()
-
-    def _clear_hotkey(self) -> None:
-        self.sequence_edit.clear()
-        self._result_hotkey = ""
-        QDialog.accept(self)
-
-    def result_hotkey(self) -> str:
-        return self._result_hotkey
-
-
 class MainWindow(QMainWindow):
     """타이머 오버레이 메인 윈도우."""
 
@@ -130,15 +77,16 @@ class MainWindow(QMainWindow):
 
         self.store = store
         self.config = store.load()
-        self.hotkey_manager = HotkeyManager()
-        self.hotkey_manager.start()
-
         self.status_label = QLabel("서버에 연결되지 않았습니다.")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        self.hotkey_hint_label = QLabel("타이머 목록을 우클릭하여 단축키 변경")
-        self.hotkey_hint_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.hotkey_hint_label.setStyleSheet("color: #bdbdbd;")
+        self._default_key_status = "Q 대기"
+        self.key_status_label = QLabel(self._default_key_status)
+        self.key_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.key_status_label.setStyleSheet("color: #bdbdbd;")
+        self._key_status_reset_timer = QTimer(self)
+        self._key_status_reset_timer.setSingleShot(True)
+        self._key_status_reset_timer.timeout.connect(self._reset_key_status)
 
         self.opacity_slider = QSlider(Qt.Horizontal)
         self.opacity_slider.setRange(30, 100)
@@ -159,7 +107,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.opacity_label)
         header_layout.addWidget(self.opacity_slider)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.hotkey_hint_label)
+        header_layout.addWidget(self.key_status_label)
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["이름", "남은 시간", "상태"])
@@ -171,8 +119,6 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._handle_table_context_menu)
         self.table.viewport().installEventFilter(self)
 
         layout = QVBoxLayout()
@@ -191,9 +137,11 @@ class MainWindow(QMainWindow):
         self.overlays: Dict[str, TimerOverlayWidget] = {}
         self.timer_states: Dict[str, RemoteTimerState] = {}
         self._table_order: list[str] = []
-        self._registered_hotkeys: Dict[str, str] = {}
         self._row_index: Dict[str, int] = {}
-        self._hotkey_cooldowns: Dict[str, float] = {}
+
+        self.key_listener = GlobalKeyListener()
+        self.key_listener.key_detected.connect(self._handle_key_detected)
+        self.key_listener.start()
 
         self._table_update_timer = QTimer(self)
         self._table_update_timer.setInterval(250)
@@ -287,7 +235,6 @@ class MainWindow(QMainWindow):
         self.timer_states = updated_states
         self._update_visible_overlays()
         self._cleanup_missing_timers(updated_states)
-        self._refresh_hotkey_registrations()
         self._refresh_table()
 
     def _update_visible_overlays(self) -> None:
@@ -297,7 +244,6 @@ class MainWindow(QMainWindow):
                 self._hide_overlay(timer_id, remove_position=True)
                 continue
             overlay.update_state(state)
-            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
             overlay.set_overlay_opacity(self.config.overlay_opacity)
 
     def _cleanup_missing_timers(self, states: Dict[str, RemoteTimerState]) -> None:
@@ -306,13 +252,6 @@ class MainWindow(QMainWindow):
         for timer_id in list(self.config.timer_positions.keys()):
             if timer_id not in valid_ids:
                 self.config.timer_positions.pop(timer_id, None)
-                changed = True
-        for timer_id in list(self.config.timer_hotkeys.keys()):
-            if timer_id not in valid_ids:
-                self.config.timer_hotkeys.pop(timer_id, None)
-                self.hotkey_manager.unregister(timer_id)
-                self._registered_hotkeys.pop(timer_id, None)
-                self._hotkey_cooldowns.pop(timer_id, None)
                 changed = True
         if changed:
             self.store.save(self.config)
@@ -378,7 +317,6 @@ class MainWindow(QMainWindow):
         )
         position = self.config.timer_positions.get(state.id, (100, 100))
         overlay.update_position(*position)
-        overlay.set_hotkey_display(self._get_hotkey_display(state.id))
         overlay.set_overlay_opacity(self.config.overlay_opacity)
         overlay.show()
         self.overlays[state.id] = overlay
@@ -405,83 +343,16 @@ class MainWindow(QMainWindow):
             self.store.save(self.config)
         self._update_row_background(timer_id)
 
-    def _open_hotkey_dialog(self, timer_id: str) -> None:
-        state = self.timer_states.get(timer_id)
-        if state is None:
+    def _handle_key_detected(self, key: str) -> None:
+        if key != "q":
             return
-        current_hotkey = self.config.timer_hotkeys.get(timer_id, "")
-        pending_hotkey = current_hotkey
+        self.key_status_label.setText("Q 감지")
+        self.key_status_label.setStyleSheet("color: #4caf50;")
+        self._key_status_reset_timer.start(1500)
 
-        while True:
-            dialog = HotkeyDialog(self, state.name, pending_hotkey)
-            if dialog.exec_() != QDialog.Accepted:
-                return
-            new_hotkey = dialog.result_hotkey()
-            if new_hotkey and self._is_hotkey_in_use(timer_id, new_hotkey):
-                QMessageBox.warning(self, "단축키", "이미 다른 타이머에서 사용 중인 단축키입니다.")
-                pending_hotkey = new_hotkey
-                continue
-            pending_hotkey = new_hotkey
-            break
-
-        if pending_hotkey:
-            self.config.timer_hotkeys[timer_id] = pending_hotkey
-        else:
-            self.config.timer_hotkeys.pop(timer_id, None)
-        self.store.save(self.config)
-        self._apply_hotkey(timer_id)
-        overlay = self.overlays.get(timer_id)
-        if overlay:
-            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
-
-    def _apply_hotkey(self, timer_id: str) -> None:
-        hotkey = self.config.timer_hotkeys.get(timer_id, "")
-        current = self._registered_hotkeys.get(timer_id)
-        if not hotkey:
-            if timer_id in self._registered_hotkeys:
-                self.hotkey_manager.unregister(timer_id)
-                self._registered_hotkeys.pop(timer_id, None)
-            return
-        if current == hotkey:
-            return
-
-        self.hotkey_manager.unregister(timer_id)
-
-        def _callback(timer_id: str = timer_id) -> None:
-            self._handle_hotkey_trigger(timer_id)
-
-        self.hotkey_manager.register(timer_id, hotkey, _callback)
-        self._registered_hotkeys[timer_id] = hotkey
-        overlay = self.overlays.get(timer_id)
-        if overlay:
-            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
-
-    def _refresh_hotkey_registrations(self) -> None:
-        for timer_id in self.timer_states.keys():
-            self._apply_hotkey(timer_id)
-
-    def _handle_hotkey_trigger(self, timer_id: str) -> None:
-        now = time.monotonic()
-        cooldown_until = self._hotkey_cooldowns.get(timer_id, 0.0)
-        if now < cooldown_until:
-            return
-        state = self.timer_states.get(timer_id)
-        if state is None:
-            return
-        if state.is_running:
-            success = self.timer_service.reset_timer(timer_id)
-            action = "리셋"
-        else:
-            success = self.timer_service.start_timer(timer_id)
-            action = "시작"
-        if not success:
-            QMessageBox.warning(self, "서버", f"'{state.name}' 타이머 {action} 요청에 실패했습니다.")
-            return
-        self._hotkey_cooldowns[timer_id] = now + 1.0
-
-    def _get_hotkey_display(self, timer_id: str) -> str:
-        hotkey = self.config.timer_hotkeys.get(timer_id, "")
-        return hotkey_to_display_text(hotkey)
+    def _reset_key_status(self) -> None:
+        self.key_status_label.setText(self._default_key_status)
+        self.key_status_label.setStyleSheet("color: #bdbdbd;")
 
     # 상태 업데이트 --------------------------------------------------------
     def _handle_connection_state(self, connected: bool, message: str) -> None:
@@ -506,7 +377,7 @@ class MainWindow(QMainWindow):
         self._capture_positions()
         self.store.save(self.config)
         self.timer_service.stop()
-        self.hotkey_manager.stop()
+        self.key_listener.stop()
         self._table_update_timer.stop()
         for overlay in self.overlays.values():
             overlay.close()
@@ -523,27 +394,6 @@ class MainWindow(QMainWindow):
                 self._toggle_overlay(row)
                 return True
         return super().eventFilter(source, event)
-
-    # 헬퍼 -----------------------------------------------------------------
-    def _handle_table_context_menu(self, position: QPoint) -> None:
-        index = self.table.indexAt(position)
-        if not index.isValid():
-            return
-        row = index.row()
-        timer_id = self._table_order[row]
-        self.table.selectRow(row)
-
-        menu = QMenu(self)
-        action = QAction("단축키 설정", self)
-        action.triggered.connect(lambda: self._open_hotkey_dialog(timer_id))
-        menu.addAction(action)
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
-    def _is_hotkey_in_use(self, timer_id: str, hotkey: str) -> bool:
-        for other_id, other_hotkey in self.config.timer_hotkeys.items():
-            if other_id != timer_id and other_hotkey == hotkey and hotkey:
-                return True
-        return False
 
     def _apply_row_style(self, row: int, timer_id: str) -> None:
         is_overlay_visible = timer_id in self.overlays

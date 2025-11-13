@@ -102,7 +102,6 @@ class AppConfig:
     server_host: str = "218.234.230.188"
     server_port: int = 47984
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
-    timer_hotkeys: Dict[str, str] = field(default_factory=dict)
     overlay_opacity: int = 85
 
     @classmethod
@@ -129,11 +128,6 @@ class AppConfig:
             server_host=data.get("server_host", "218.234.230.188"),
             server_port=int(data.get("server_port", 47984)),
             timer_positions=timer_positions,
-            timer_hotkeys={
-                str(key): str(value)
-                for key, value in data.get("timer_hotkeys", {}).items()
-                if isinstance(key, str)
-            },
             overlay_opacity=int(data.get("overlay_opacity", 85)),
         )
 
@@ -142,7 +136,6 @@ class AppConfig:
             "server_host": self.server_host,
             "server_port": self.server_port,
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
-            "timer_hotkeys": dict(self.timer_hotkeys),
             "overlay_opacity": int(self.overlay_opacity),
         }
 

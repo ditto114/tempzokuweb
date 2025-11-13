@@ -51,7 +51,6 @@ class TimerOverlayWidget(QWidget):
         self._display_timer = QTimer(self)
         self._display_timer.setInterval(200)
         self._display_timer.timeout.connect(self._update_display)
-        self._hotkey_display = ""
         self._overlay_opacity = 85
 
         self.setWindowFlags(
@@ -105,8 +104,6 @@ class TimerOverlayWidget(QWidget):
     def _update_running_state(self) -> None:
         running = self._state.is_running
         label = "리셋" if running else "시작"
-        if self._hotkey_display:
-            label = f"{label}({self._hotkey_display})"
         self.action_button.setText(label)
 
     def _handle_action(self) -> None:
@@ -118,10 +115,6 @@ class TimerOverlayWidget(QWidget):
             action = "시작"
         if not success:
             QMessageBox.warning(self, "서버", f"타이머 {action} 요청에 실패했습니다.")
-
-    def set_hotkey_display(self, text: str) -> None:
-        self._hotkey_display = text
-        self._update_running_state()
 
     def set_overlay_opacity(self, opacity: int) -> None:
         self._overlay_opacity = max(10, min(100, opacity))
