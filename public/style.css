@@ -451,6 +451,14 @@ button:disabled {
   align-content: start;
 }
 
+.timer-card-list.view-mode-active {
+  display: block;
+  position: relative;
+  min-height: 320px;
+  padding-bottom: 48px;
+  overflow: visible;
+}
+
 .timer-grid-settings {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -488,6 +496,22 @@ button:disabled {
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   overflow: hidden;
   min-height: 110px;
+}
+
+.timer-card.view-mode-card {
+  position: absolute;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  z-index: 1;
+}
+
+.timer-card.view-mode-card.view-mode-dragging {
+  cursor: grabbing;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  transform: translate3d(0, 0, 0) scale(1.02);
+  z-index: 40;
 }
 
 .timer-card-info {
