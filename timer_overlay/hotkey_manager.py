@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import keyboard as global_keyboard
 from PyQt5.QtCore import QTimer
@@ -49,28 +49,24 @@ class HotkeyManager:
         self._registrations: Dict[str, _Registration] = {}
         self._lock = threading.RLock()
         self._active = False
-        self._hook: Optional[Callable] = None
         self._pressed_keys: Set[str] = set()
+        self._key_hooks: Dict[str, Any] = {}
 
     def start(self) -> None:
         with self._lock:
             if self._active:
                 return
-            callback = self._handle_keyboard_event
-            global_keyboard.hook(callback, suppress=False)
-            self._hook = callback
+            self._pressed_keys.clear()
+            for registration in self._registrations.values():
+                registration.active = False
             self._active = True
+            self._refresh_key_hooks_locked()
 
     def stop(self) -> None:
         with self._lock:
             if not self._active:
                 return
-            if self._hook is not None:
-                try:
-                    global_keyboard.unhook(self._hook)
-                except KeyError:
-                    logger.debug("이미 제거된 키보드 후크")
-                self._hook = None
+            self._remove_all_key_hooks_locked()
             self._pressed_keys.clear()
             for registration in self._registrations.values():
                 registration.active = False
@@ -108,17 +104,24 @@ class HotkeyManager:
             )
             self._registrations[key] = registration
 
+            if self._active:
+                self._refresh_key_hooks_locked()
+
     def unregister(self, key: str) -> None:
         with self._lock:
             registration = self._registrations.pop(key, None)
             if registration is None:
                 return
             registration.active = False
+            if self._active:
+                self._refresh_key_hooks_locked()
 
     def clear(self) -> None:
         with self._lock:
             self._registrations.clear()
             self._pressed_keys.clear()
+            if self._active:
+                self._refresh_key_hooks_locked()
 
     def _invoke_callback(self, callback: Callable[[], None]) -> None:
         QTimer.singleShot(0, callback)
@@ -206,6 +209,40 @@ class HotkeyManager:
             base = lowered.split(" ", 1)[1]
             return aliases.get(base, base)
         return lowered
+
+    def _remove_all_key_hooks_locked(self) -> None:
+        for handler in list(self._key_hooks.values()):
+            try:
+                global_keyboard.unhook_key(handler)
+            except KeyError:
+                logger.debug("이미 제거된 키보드 후크")
+        self._key_hooks.clear()
+
+    def _refresh_key_hooks_locked(self) -> None:
+        if not self._active:
+            return
+
+        required_keys: Set[str] = set()
+        for registration in self._registrations.values():
+            required_keys.update(registration.normalized_tokens)
+
+        for key in list(self._key_hooks.keys()):
+            if key not in required_keys:
+                handler = self._key_hooks.pop(key)
+                try:
+                    global_keyboard.unhook_key(handler)
+                except KeyError:
+                    logger.debug("이미 제거된 키보드 후크")
+
+        for key in required_keys:
+            if key in self._key_hooks:
+                continue
+            handler = global_keyboard.hook_key(
+                key, self._handle_keyboard_event, suppress=False
+            )
+            self._key_hooks[key] = handler
+
+        self._pressed_keys.intersection_update(required_keys)
 
     def _handle_keyboard_event(self, event) -> None:
         if event.event_type not in ("down", "up"):
