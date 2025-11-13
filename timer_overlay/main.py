@@ -20,6 +20,8 @@ def main() -> None:
     store = ConfigStore()
     window = MainWindow(store)
     window.show()
+    window.raise_()
+    window.activateWindow()
     sys.exit(app.exec_())
 
 
