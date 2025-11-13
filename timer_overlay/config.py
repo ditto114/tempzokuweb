@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -39,8 +39,19 @@ def _default_config_path() -> Path:
     candidates.append(package_dir)
 
     for base in candidates:
-        if base.exists() and base.is_dir() and os.access(base, os.W_OK):
-            return base / CONFIG_FILE_NAME
+        if not base.exists() or not base.is_dir():
+            continue
+
+        try:
+            # ``os.access`` 는 Windows/MSYS 조합에서 일관적으로 동작하지 않아 실제로
+            # 임시 파일을 만들 수 있는지 확인하여 쓰기 가능 여부를 판단한다.
+            with tempfile.NamedTemporaryFile(dir=base, delete=True):
+                pass
+        except (OSError, PermissionError):
+            logger.debug("설정 경로 후보 %s 는 쓰기 불가", base)
+            continue
+
+        return base / CONFIG_FILE_NAME
 
     # 모든 후보가 실패할 경우 마지막 수단으로 사용자 홈 디렉터리를 사용한다.
     return Path.home() / CONFIG_FILE_NAME
