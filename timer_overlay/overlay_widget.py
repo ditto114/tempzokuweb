@@ -1,7 +1,7 @@
 """타이머 오버레이 위젯."""
 from __future__ import annotations
 
-from PyQt5.QtCore import QPoint, Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
@@ -12,6 +12,7 @@ class TimerOverlayWidget(QWidget):
     """개별 타이머를 화면에 표시하는 오버레이."""
 
     position_changed = pyqtSignal(int, int)
+    hotkey_config_requested = pyqtSignal(str)
 
     def __init__(self, service: TimerService, state: RemoteTimerState):
         super().__init__()
@@ -19,6 +20,9 @@ class TimerOverlayWidget(QWidget):
         self._state = state
         self.timer_id = state.id
         self._drag_position = QPoint()
+        self._display_timer = QTimer(self)
+        self._display_timer.setInterval(200)
+        self._display_timer.timeout.connect(self._update_display)
 
         self.setWindowFlags(
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
@@ -38,21 +42,31 @@ class TimerOverlayWidget(QWidget):
         self.time_label.setFont(time_font)
         self.time_label.setStyleSheet("color: #ffeb3b;")
 
-        self.start_button = QPushButton()
-        self.reset_button = QPushButton("리셋")
-        self.start_button.clicked.connect(self._toggle_start)
-        self.reset_button.clicked.connect(self._reset_timer)
+        self.action_button = QPushButton()
+        self.action_button.clicked.connect(self._handle_action)
+
+        self.hotkey_label = QLabel("")
+        self.hotkey_label.setAlignment(Qt.AlignCenter)
+        hotkey_font = QFont("Arial", 9)
+        self.hotkey_label.setFont(hotkey_font)
+        self.hotkey_label.setStyleSheet("color: #bdbdbd;")
+
+        self.hotkey_button = QPushButton("단축키 설정")
+        self.hotkey_button.clicked.connect(lambda: self.hotkey_config_requested.emit(self.timer_id))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
         layout.addWidget(self.name_label)
         layout.addWidget(self.time_label)
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.reset_button)
+        layout.addWidget(self.action_button)
+        layout.addWidget(self.hotkey_label)
+        layout.addWidget(self.hotkey_button)
         self.setLayout(layout)
 
         self._update_running_state()
+        self._update_display()
+        self._display_timer.start()
 
     # 데이터 갱신 ----------------------------------------------------------
     def update_state(self, state: RemoteTimerState) -> None:
@@ -60,26 +74,33 @@ class TimerOverlayWidget(QWidget):
 
         self._state = state
         self.name_label.setText(state.name)
-        self.time_label.setText(state.formatted_remaining)
         self._update_running_state()
+        self._update_display()
 
     def _update_running_state(self) -> None:
         running = self._state.is_running
-        self.start_button.setText("정지" if running else "시작")
+        self.action_button.setText("리셋" if running else "시작")
 
-    def _toggle_start(self) -> None:
+    def _handle_action(self) -> None:
         if self._state.is_running:
-            success = self._service.pause_timer(self._state.id)
-            action = "정지"
+            success = self._service.reset_timer(self._state.id)
+            action = "리셋"
         else:
             success = self._service.start_timer(self._state.id)
             action = "시작"
         if not success:
             QMessageBox.warning(self, "서버", f"타이머 {action} 요청에 실패했습니다.")
 
-    def _reset_timer(self) -> None:
-        if not self._service.reset_timer(self._state.id):
-            QMessageBox.warning(self, "서버", "타이머 리셋 요청에 실패했습니다.")
+    def set_hotkey_text(self, text: str) -> None:
+        if text:
+            self.hotkey_label.setText(f"단축키: {text}")
+        else:
+            self.hotkey_label.setText("단축키가 설정되어 있지 않습니다.")
+
+    def _update_display(self) -> None:
+        remaining_text = self._state.formatted_remaining_at()
+        self.time_label.setText(remaining_text)
+        self._update_running_state()
 
     # QWidget 이벤트 -------------------------------------------------------
     def paintEvent(self, event):  # type: ignore[override]

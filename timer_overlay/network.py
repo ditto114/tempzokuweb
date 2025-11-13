@@ -5,7 +5,7 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import requests
@@ -37,6 +37,9 @@ class RemoteTimerState:
     is_running: bool
     repeat_enabled: bool
     display_order: int
+    end_time_ms: Optional[int] = None
+    updated_at_ms: Optional[int] = None
+    synced_at_monotonic: float = field(default_factory=time.monotonic)
 
     @classmethod
     def from_payload(cls, payload: Dict[str, Any]) -> "RemoteTimerState":
@@ -51,6 +54,16 @@ class RemoteTimerState:
             display_order = int(raw_order)
         except (TypeError, ValueError):
             display_order = 0
+        end_time_raw = payload.get("endTime")
+        try:
+            end_time_ms = int(end_time_raw) if end_time_raw is not None else None
+        except (TypeError, ValueError):
+            end_time_ms = None
+        updated_at_raw = payload.get("updatedAt")
+        try:
+            updated_at_ms = int(updated_at_raw) if updated_at_raw is not None else None
+        except (TypeError, ValueError):
+            updated_at_ms = None
         return cls(
             id=timer_id,
             name=name,
@@ -59,15 +72,36 @@ class RemoteTimerState:
             is_running=is_running,
             repeat_enabled=repeat_enabled,
             display_order=display_order,
+            end_time_ms=end_time_ms,
+            updated_at_ms=updated_at_ms,
         )
 
     @property
     def remaining_seconds(self) -> int:
         return max(0, int(self.remaining_ms // 1000))
 
+    def remaining_ms_at(self, monotonic_time: Optional[float] = None) -> int:
+        reference = monotonic_time if monotonic_time is not None else time.monotonic()
+        base_remaining = max(0, int(self.remaining_ms))
+        if not self.is_running:
+            return base_remaining
+        if self.end_time_ms is not None:
+            remaining = int(self.end_time_ms - time.time() * 1000)
+            return max(0, remaining)
+        elapsed = int((reference - self.synced_at_monotonic) * 1000)
+        return max(0, base_remaining - max(0, elapsed))
+
     @property
     def formatted_remaining(self) -> str:
-        total = self.remaining_seconds
+        return self.format_duration(self.remaining_ms)
+
+    def formatted_remaining_at(self, monotonic_time: Optional[float] = None) -> str:
+        remaining = self.remaining_ms_at(monotonic_time)
+        return self.format_duration(remaining)
+
+    @staticmethod
+    def format_duration(duration_ms: int) -> str:
+        total = max(0, int(duration_ms // 1000))
         hours, remainder = divmod(total, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours:
