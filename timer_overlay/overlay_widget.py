@@ -8,11 +8,39 @@ from PyQt5.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidg
 from .network import RemoteTimerState, TimerService
 
 
+class _OverlayProgressBar(QWidget):
+    """타이머 진행 상황을 표시하는 간단한 바."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._progress = 0.0
+        self._color = QColor("#ffeb3b")
+        self.setFixedHeight(6)
+
+    def set_progress(self, value: float) -> None:
+        self._progress = max(0.0, min(1.0, value))
+        self.update()
+
+    def set_color(self, color: QColor) -> None:
+        self._color = color
+        self.update()
+
+    def paintEvent(self, event):  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(self._color)
+        painter.setPen(Qt.NoPen)
+        width = int(self._progress * self.width())
+        rect = self.rect()
+        rect.setWidth(width)
+        painter.drawRoundedRect(rect, 3, 3)
+        super().paintEvent(event)
+
+
 class TimerOverlayWidget(QWidget):
     """개별 타이머를 화면에 표시하는 오버레이."""
 
     position_changed = pyqtSignal(int, int)
-    hotkey_config_requested = pyqtSignal(str)
 
     def __init__(self, service: TimerService, state: RemoteTimerState):
         super().__init__()
@@ -23,6 +51,8 @@ class TimerOverlayWidget(QWidget):
         self._display_timer = QTimer(self)
         self._display_timer.setInterval(200)
         self._display_timer.timeout.connect(self._update_display)
+        self._hotkey_display = ""
+        self._overlay_opacity = 85
 
         self.setWindowFlags(
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
@@ -40,28 +70,23 @@ class TimerOverlayWidget(QWidget):
         self.time_label.setAlignment(Qt.AlignCenter)
         time_font = QFont("Consolas", 18, QFont.Bold)
         self.time_label.setFont(time_font)
-        self.time_label.setStyleSheet("color: #ffeb3b;")
+        self._default_time_color = QColor("#ffeb3b")
+        self._warning_time_color = QColor("#ff5252")
+        self._apply_time_color(self._default_time_color)
+
+        self.progress_bar = _OverlayProgressBar()
+        self.progress_bar.hide()
 
         self.action_button = QPushButton()
         self.action_button.clicked.connect(self._handle_action)
-
-        self.hotkey_label = QLabel("")
-        self.hotkey_label.setAlignment(Qt.AlignCenter)
-        hotkey_font = QFont("Arial", 9)
-        self.hotkey_label.setFont(hotkey_font)
-        self.hotkey_label.setStyleSheet("color: #bdbdbd;")
-
-        self.hotkey_button = QPushButton("단축키 설정")
-        self.hotkey_button.clicked.connect(lambda: self.hotkey_config_requested.emit(self.timer_id))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
         layout.addWidget(self.name_label)
         layout.addWidget(self.time_label)
+        layout.addWidget(self.progress_bar)
         layout.addWidget(self.action_button)
-        layout.addWidget(self.hotkey_label)
-        layout.addWidget(self.hotkey_button)
         self.setLayout(layout)
 
         self._update_running_state()
@@ -79,7 +104,10 @@ class TimerOverlayWidget(QWidget):
 
     def _update_running_state(self) -> None:
         running = self._state.is_running
-        self.action_button.setText("리셋" if running else "시작")
+        label = "리셋" if running else "시작"
+        if self._hotkey_display:
+            label = f"{label}({self._hotkey_display})"
+        self.action_button.setText(label)
 
     def _handle_action(self) -> None:
         if self._state.is_running:
@@ -91,22 +119,51 @@ class TimerOverlayWidget(QWidget):
         if not success:
             QMessageBox.warning(self, "서버", f"타이머 {action} 요청에 실패했습니다.")
 
-    def set_hotkey_text(self, text: str) -> None:
-        if text:
-            self.hotkey_label.setText(f"단축키: {text}")
-        else:
-            self.hotkey_label.setText("단축키가 설정되어 있지 않습니다.")
+    def set_hotkey_display(self, text: str) -> None:
+        self._hotkey_display = text
+        self._update_running_state()
+
+    def set_overlay_opacity(self, opacity: int) -> None:
+        self._overlay_opacity = max(10, min(100, opacity))
+        self.update()
 
     def _update_display(self) -> None:
-        remaining_text = self._state.formatted_remaining_at()
-        self.time_label.setText(remaining_text)
+        remaining_ms = self._state.remaining_ms_at()
+        original_duration = self._state.duration_ms
+        duration = max(1, original_duration)
+        is_waiting = (
+            not self._state.is_running
+            and original_duration > 0
+            and remaining_ms >= original_duration
+        )
+
+        if is_waiting:
+            self.time_label.setText("대기중")
+        else:
+            remaining_text = self._state.format_duration(remaining_ms)
+            self.time_label.setText(remaining_text)
+
+        running = self._state.is_running
+        if running:
+            progress = 1.0 - (remaining_ms / duration)
+            self.progress_bar.set_progress(progress)
+            warning = remaining_ms < 60_000
+            color = self._warning_time_color if warning else self._default_time_color
+            self.progress_bar.set_color(color)
+            self.progress_bar.show()
+            self._apply_time_color(color)
+        else:
+            self.progress_bar.hide()
+            self._apply_time_color(self._default_time_color)
+
         self._update_running_state()
 
     # QWidget 이벤트 -------------------------------------------------------
     def paintEvent(self, event):  # type: ignore[override]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        color = QColor(20, 20, 20, 210)
+        alpha = int(255 * (self._overlay_opacity / 100))
+        color = QColor(20, 20, 20, alpha)
         painter.setBrush(color)
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(self.rect(), 15, 15)
@@ -137,3 +194,6 @@ class TimerOverlayWidget(QWidget):
 
     def current_position(self) -> QPoint:
         return self.pos()
+
+    def _apply_time_color(self, color: QColor) -> None:
+        self.time_label.setStyleSheet(f"color: {color.name()};")

@@ -6,9 +6,10 @@ import time
 from typing import Dict
 
 import requests
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtCore import QEvent, QPoint, QTimer, Qt
+from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
+    QAction,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -16,8 +17,10 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -101,6 +104,10 @@ class HotkeyDialog(QDialog):
 
     def accept(self) -> None:  # type: ignore[override]
         sequence = self.sequence_edit.keySequence()
+        sequence_text = sequence.toString(QKeySequence.PortableText)
+        if sequence.count() > 1 or "," in sequence_text:
+            QMessageBox.warning(self, "단축키", "단일 단축키만 설정할 수 있습니다.")
+            return
         self._result_hotkey = qkeysequence_to_hotkey(sequence)
         super().accept()
 
@@ -129,13 +136,30 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("서버에 연결되지 않았습니다.")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        self.connect_button = QPushButton("서버 설정")
-        self.connect_button.clicked.connect(self._open_server_settings_dialog)
+        self.hotkey_hint_label = QLabel("타이머 목록을 우클릭하여 단축키 변경")
+        self.hotkey_hint_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.hotkey_hint_label.setStyleSheet("color: #bdbdbd;")
+
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(30, 100)
+        initial_opacity = max(30, min(100, self.config.overlay_opacity))
+        self.opacity_slider.setValue(initial_opacity)
+        self.opacity_slider.setFixedWidth(180)
+        self.opacity_slider.valueChanged.connect(self._handle_opacity_changed)
+        if self.config.overlay_opacity != initial_opacity:
+            self.config.overlay_opacity = initial_opacity
+            self.store.save(self.config)
+
+        self.opacity_label = QLabel("오버레이 투명도")
+        self.opacity_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.status_label)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.connect_button)
+        header_layout.addWidget(self.opacity_label)
+        header_layout.addWidget(self.opacity_slider)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.hotkey_hint_label)
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["이름", "남은 시간", "상태"])
@@ -147,7 +171,9 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.cellClicked.connect(self._handle_table_cell_clicked)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._handle_table_context_menu)
+        self.table.viewport().installEventFilter(self)
 
         layout = QVBoxLayout()
         layout.addLayout(header_layout)
@@ -166,6 +192,8 @@ class MainWindow(QMainWindow):
         self.timer_states: Dict[str, RemoteTimerState] = {}
         self._table_order: list[str] = []
         self._registered_hotkeys: Dict[str, str] = {}
+        self._row_index: Dict[str, int] = {}
+        self._hotkey_cooldowns: Dict[str, float] = {}
 
         self._table_update_timer = QTimer(self)
         self._table_update_timer.setInterval(250)
@@ -269,7 +297,8 @@ class MainWindow(QMainWindow):
                 self._hide_overlay(timer_id, remove_position=True)
                 continue
             overlay.update_state(state)
-            overlay.set_hotkey_text(self._get_hotkey_display(timer_id))
+            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
+            overlay.set_overlay_opacity(self.config.overlay_opacity)
 
     def _cleanup_missing_timers(self, states: Dict[str, RemoteTimerState]) -> None:
         valid_ids = set(states.keys())
@@ -283,6 +312,7 @@ class MainWindow(QMainWindow):
                 self.config.timer_hotkeys.pop(timer_id, None)
                 self.hotkey_manager.unregister(timer_id)
                 self._registered_hotkeys.pop(timer_id, None)
+                self._hotkey_cooldowns.pop(timer_id, None)
                 changed = True
         if changed:
             self.store.save(self.config)
@@ -292,6 +322,7 @@ class MainWindow(QMainWindow):
         self._table_order = [state.id for state in states]
         self.table.setRowCount(len(states))
         now = time.monotonic()
+        self._row_index = {}
         for row, state in enumerate(states):
             name_item = QTableWidgetItem(state.name)
             name_item.setData(Qt.UserRole, state.id)
@@ -307,6 +338,8 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, remaining_item)
             self.table.setItem(row, 2, status_item)
+            self._row_index[state.id] = row
+            self._apply_row_style(row, state.id)
 
     def _update_table_remaining(self) -> None:
         if not self._table_order:
@@ -324,8 +357,9 @@ class MainWindow(QMainWindow):
                 remaining_ms = state.remaining_ms_at(now)
                 status_text = "진행 중" if state.is_running else ("완료" if remaining_ms == 0 else "대기")
                 status_item.setText(status_text)
+            self._apply_row_style(row, timer_id)
 
-    def _handle_table_cell_clicked(self, row: int, column: int) -> None:  # noqa: ARG002
+    def _toggle_overlay(self, row: int) -> None:
         if row < 0 or row >= len(self._table_order):
             return
         timer_id = self._table_order[row]
@@ -342,15 +376,16 @@ class MainWindow(QMainWindow):
         overlay.position_changed.connect(
             lambda x, y, timer_id=state.id: self._on_overlay_moved(timer_id, x, y)
         )
-        overlay.hotkey_config_requested.connect(self._open_hotkey_dialog)
         position = self.config.timer_positions.get(state.id, (100, 100))
         overlay.update_position(*position)
-        overlay.set_hotkey_text(self._get_hotkey_display(state.id))
+        overlay.set_hotkey_display(self._get_hotkey_display(state.id))
+        overlay.set_overlay_opacity(self.config.overlay_opacity)
         overlay.show()
         self.overlays[state.id] = overlay
         if state.id not in self.config.timer_positions:
             self.config.timer_positions[state.id] = position
             self.store.save(self.config)
+        self._update_row_background(state.id)
 
     def _hide_overlay(self, timer_id: str, *, remove_position: bool = False) -> None:
         overlay = self.overlays.pop(timer_id, None)
@@ -368,25 +403,36 @@ class MainWindow(QMainWindow):
         overlay.close()
         if changed:
             self.store.save(self.config)
+        self._update_row_background(timer_id)
 
     def _open_hotkey_dialog(self, timer_id: str) -> None:
         state = self.timer_states.get(timer_id)
         if state is None:
             return
         current_hotkey = self.config.timer_hotkeys.get(timer_id, "")
-        dialog = HotkeyDialog(self, state.name, current_hotkey)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        new_hotkey = dialog.result_hotkey()
-        if new_hotkey:
-            self.config.timer_hotkeys[timer_id] = new_hotkey
+        pending_hotkey = current_hotkey
+
+        while True:
+            dialog = HotkeyDialog(self, state.name, pending_hotkey)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            new_hotkey = dialog.result_hotkey()
+            if new_hotkey and self._is_hotkey_in_use(timer_id, new_hotkey):
+                QMessageBox.warning(self, "단축키", "이미 다른 타이머에서 사용 중인 단축키입니다.")
+                pending_hotkey = new_hotkey
+                continue
+            pending_hotkey = new_hotkey
+            break
+
+        if pending_hotkey:
+            self.config.timer_hotkeys[timer_id] = pending_hotkey
         else:
             self.config.timer_hotkeys.pop(timer_id, None)
         self.store.save(self.config)
         self._apply_hotkey(timer_id)
         overlay = self.overlays.get(timer_id)
         if overlay:
-            overlay.set_hotkey_text(self._get_hotkey_display(timer_id))
+            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
 
     def _apply_hotkey(self, timer_id: str) -> None:
         hotkey = self.config.timer_hotkeys.get(timer_id, "")
@@ -406,12 +452,19 @@ class MainWindow(QMainWindow):
 
         self.hotkey_manager.register(timer_id, hotkey, _callback)
         self._registered_hotkeys[timer_id] = hotkey
+        overlay = self.overlays.get(timer_id)
+        if overlay:
+            overlay.set_hotkey_display(self._get_hotkey_display(timer_id))
 
     def _refresh_hotkey_registrations(self) -> None:
         for timer_id in self.timer_states.keys():
             self._apply_hotkey(timer_id)
 
     def _handle_hotkey_trigger(self, timer_id: str) -> None:
+        now = time.monotonic()
+        cooldown_until = self._hotkey_cooldowns.get(timer_id, 0.0)
+        if now < cooldown_until:
+            return
         state = self.timer_states.get(timer_id)
         if state is None:
             return
@@ -423,6 +476,8 @@ class MainWindow(QMainWindow):
             action = "시작"
         if not success:
             QMessageBox.warning(self, "서버", f"'{state.name}' 타이머 {action} 요청에 실패했습니다.")
+            return
+        self._hotkey_cooldowns[timer_id] = now + 1.0
 
     def _get_hotkey_display(self, timer_id: str) -> str:
         hotkey = self.config.timer_hotkeys.get(timer_id, "")
@@ -430,6 +485,8 @@ class MainWindow(QMainWindow):
 
     # 상태 업데이트 --------------------------------------------------------
     def _handle_connection_state(self, connected: bool, message: str) -> None:
+        if message == "실시간 스트림에 연결되었습니다.":
+            message = ""
         self.status_label.setText(message)
         self.status_label.setStyleSheet(
             "color: #4caf50;" if connected else "color: #ff9800;"
@@ -454,3 +511,63 @@ class MainWindow(QMainWindow):
         for overlay in self.overlays.values():
             overlay.close()
         super().closeEvent(event)
+
+    # 이벤트 필터 ----------------------------------------------------------
+    def eventFilter(self, source, event):  # type: ignore[override]
+        if source is self.table.viewport() and event.type() == QEvent.MouseButtonPress:
+            mouse_event = event
+            index = self.table.indexAt(mouse_event.pos())
+            if index.isValid() and mouse_event.button() == Qt.LeftButton:
+                row = index.row()
+                self.table.selectRow(row)
+                self._toggle_overlay(row)
+                return True
+        return super().eventFilter(source, event)
+
+    # 헬퍼 -----------------------------------------------------------------
+    def _handle_table_context_menu(self, position: QPoint) -> None:
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        row = index.row()
+        timer_id = self._table_order[row]
+        self.table.selectRow(row)
+
+        menu = QMenu(self)
+        action = QAction("단축키 설정", self)
+        action.triggered.connect(lambda: self._open_hotkey_dialog(timer_id))
+        menu.addAction(action)
+        menu.exec_(self.table.viewport().mapToGlobal(position))
+
+    def _is_hotkey_in_use(self, timer_id: str, hotkey: str) -> bool:
+        for other_id, other_hotkey in self.config.timer_hotkeys.items():
+            if other_id != timer_id and other_hotkey == hotkey and hotkey:
+                return True
+        return False
+
+    def _apply_row_style(self, row: int, timer_id: str) -> None:
+        is_overlay_visible = timer_id in self.overlays
+        color = QColor("#ccffcc") if is_overlay_visible else QColor(Qt.white)
+        for column in range(self.table.columnCount()):
+            item = self.table.item(row, column)
+            if item is not None:
+                item.setBackground(color)
+
+    def _update_row_background(self, timer_id: str) -> None:
+        row = self._row_index.get(timer_id)
+        if row is None:
+            return
+        self._apply_row_style(row, timer_id)
+
+    def _handle_opacity_changed(self, value: int) -> None:
+        clamped = max(30, min(100, value))
+        if self.config.overlay_opacity == clamped:
+            opacity_changed = False
+        else:
+            self.config.overlay_opacity = clamped
+            self.store.save(self.config)
+            opacity_changed = True
+        for overlay in self.overlays.values():
+            overlay.set_overlay_opacity(clamped)
+        if opacity_changed:
+            logger.info("오버레이 투명도 변경: %s", clamped)
