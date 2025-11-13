@@ -4,42 +4,32 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Dict, Iterable, Optional, Tuple
 
+import keyboard as global_keyboard
 from PyQt5.QtCore import QTimer
-from pynput import keyboard
 
 logger = logging.getLogger(__name__)
 
-
-_KEY_TOKEN_MAP: Dict[keyboard.Key, str] = {
-    keyboard.Key.alt: "<alt>",
-    keyboard.Key.alt_l: "<alt>",
-    keyboard.Key.alt_r: "<alt>",
-    keyboard.Key.shift: "<shift>",
-    keyboard.Key.shift_l: "<shift>",
-    keyboard.Key.shift_r: "<shift>",
-    keyboard.Key.ctrl: "<ctrl>",
-    keyboard.Key.ctrl_l: "<ctrl>",
-    keyboard.Key.ctrl_r: "<ctrl>",
-    keyboard.Key.cmd: "<cmd>",
-    keyboard.Key.cmd_l: "<cmd>",
-    keyboard.Key.cmd_r: "<cmd>",
-    keyboard.Key.super: "<cmd>",
-    keyboard.Key.space: "<space>",
-    keyboard.Key.enter: "<enter>",
-    keyboard.Key.tab: "<tab>",
-    keyboard.Key.esc: "<esc>",
-    keyboard.Key.backspace: "<backspace>",
-    keyboard.Key.delete: "<delete>",
-    keyboard.Key.home: "<home>",
-    keyboard.Key.end: "<end>",
-    keyboard.Key.page_up: "<page_up>",
-    keyboard.Key.page_down: "<page_down>",
-    keyboard.Key.up: "<up>",
-    keyboard.Key.down: "<down>",
-    keyboard.Key.left: "<left>",
-    keyboard.Key.right: "<right>",
+_TOKEN_TO_KEYBOARD_KEY = {
+    "ctrl": "ctrl",
+    "alt": "alt",
+    "shift": "shift",
+    "cmd": "windows",
+    "space": "space",
+    "enter": "enter",
+    "tab": "tab",
+    "esc": "esc",
+    "backspace": "backspace",
+    "delete": "delete",
+    "home": "home",
+    "end": "end",
+    "page_up": "page up",
+    "page_down": "page down",
+    "up": "up",
+    "down": "down",
+    "left": "left",
+    "right": "right",
 }
 
 
@@ -47,38 +37,33 @@ _KEY_TOKEN_MAP: Dict[keyboard.Key, str] = {
 class _Registration:
     hotkey: str
     callback: Callable[[], None]
-    tokens: Set[str]
-    active: bool = False
+    tokens: Tuple[str, ...]
+    handler: Optional[int] = None
 
 
 class HotkeyManager:
-    """pynput을 이용해 글로벌 단축키를 관리한다."""
+    """keyboard 라이브러리를 이용해 글로벌 단축키를 관리한다."""
 
     def __init__(self) -> None:
         self._registrations: Dict[str, _Registration] = {}
-        self._listener: Optional[keyboard.Listener] = None
         self._lock = threading.RLock()
-        self._pressed_tokens: Set[str] = set()
+        self._active = False
 
     def start(self) -> None:
         with self._lock:
-            if self._listener and self._listener.running:
+            if self._active:
                 return
-            self._listener = keyboard.Listener(
-                on_press=self._handle_press,
-                on_release=self._handle_release,
-                suppress=False,
-            )
-            self._listener.start()
+            self._active = True
+            for registration in self._registrations.values():
+                self._attach_registration(registration)
 
     def stop(self) -> None:
         with self._lock:
-            if self._listener:
-                self._listener.stop()
-                self._listener = None
-            self._pressed_tokens.clear()
+            if not self._active:
+                return
             for registration in self._registrations.values():
-                registration.active = False
+                self._detach_registration(registration)
+            self._active = False
 
     def register(self, key: str, hotkey: str, callback: Callable[[], None]) -> None:
         tokens = self._parse_hotkey(hotkey)
@@ -94,72 +79,88 @@ class HotkeyManager:
             if duplicated:
                 logger.warning("중복된 단축키는 등록되지 않았습니다: %s", hotkey)
                 return
-            self._registrations[key] = _Registration(
+
+            if key in self._registrations:
+                self._detach_registration(self._registrations[key])
+
+            registration = _Registration(
                 hotkey=hotkey,
                 callback=callback,
                 tokens=tokens,
             )
-            if not self._listener or not self._listener.running:
-                self.start()
+            self._registrations[key] = registration
+
+            if self._active:
+                self._attach_registration(registration)
 
     def unregister(self, key: str) -> None:
         with self._lock:
-            if key in self._registrations:
-                self._registrations.pop(key)
+            registration = self._registrations.pop(key, None)
+            if registration is None:
+                return
+            self._detach_registration(registration)
 
     def clear(self) -> None:
         with self._lock:
+            for registration in self._registrations.values():
+                self._detach_registration(registration)
             self._registrations.clear()
-            self._pressed_tokens.clear()
 
-    def _handle_press(self, key: keyboard.Key | keyboard.KeyCode) -> None:
-        token = self._token_from_key(key)
-        if token is None:
+    def _attach_registration(self, registration: _Registration) -> None:
+        if registration.handler is not None:
+            self._detach_registration(registration)
+        try:
+            hotkey_expression = self._tokens_to_keyboard_expression(registration.tokens)
+        except ValueError:
+            logger.warning("지원되지 않는 단축키가 등록되었습니다: %s", registration.hotkey)
             return
-        with self._lock:
-            if token in self._pressed_tokens:
-                # 이미 눌려 있다고 판단되면 추가 처리 없이 종료
-                return
-            self._pressed_tokens.add(token)
-            for registration in self._registrations.values():
-                if registration.tokens.issubset(self._pressed_tokens):
-                    if not registration.active:
-                        registration.active = True
-                        self._invoke_callback(registration.callback)
 
-    def _handle_release(self, key: keyboard.Key | keyboard.KeyCode) -> None:
-        token = self._token_from_key(key)
-        if token is None:
+        try:
+            registration.handler = global_keyboard.add_hotkey(
+                hotkey_expression,
+                lambda callback=registration.callback: self._invoke_callback(callback),
+                suppress=False,
+                trigger_on_release=False,
+            )
+        except ValueError as exc:
+            logger.warning("단축키 등록 실패(%s): %s", exc, registration.hotkey)
+
+    def _detach_registration(self, registration: _Registration) -> None:
+        if registration.handler is None:
             return
-        with self._lock:
-            self._pressed_tokens.discard(token)
-            for registration in self._registrations.values():
-                if token in registration.tokens:
-                    registration.active = False
+        try:
+            global_keyboard.remove_hotkey(registration.handler)
+        except KeyError:
+            logger.debug("이미 제거된 단축키 핸들: %s", registration.hotkey)
+        finally:
+            registration.handler = None
 
     def _invoke_callback(self, callback: Callable[[], None]) -> None:
         QTimer.singleShot(0, callback)
 
-    def _parse_hotkey(self, hotkey: str) -> Set[str]:
-        tokens = {part.strip() for part in hotkey.split("+") if part.strip()}
-        return {token.lower() if not token.startswith("<") else token.lower() for token in tokens}
+    def _parse_hotkey(self, hotkey: str) -> Tuple[str, ...]:
+        tokens = []
+        for part in hotkey.split("+"):
+            token = part.strip().lower()
+            if not token:
+                continue
+            tokens.append(token)
+        return tuple(tokens)
 
-    def _token_from_key(self, key: keyboard.Key | keyboard.KeyCode) -> Optional[str]:
-        if isinstance(key, keyboard.Key):
-            token = _KEY_TOKEN_MAP.get(key)
-            if token:
-                return token
-            if key.name and key.name.startswith("f") and key.name[1:].isdigit():
-                return f"<{key.name.lower()}>"
-            return None
-        if isinstance(key, keyboard.KeyCode):
-            if key.char:
-                return key.char.lower()
-            if key.vk is not None:
-                # 숫자패드 등 특수키 지원
-                if 96 <= key.vk <= 105:
-                    return str(key.vk - 96)
-                if 48 <= key.vk <= 57:
-                    return str(key.vk - 48)
-            return None
-        return None
+    def _tokens_to_keyboard_expression(self, tokens: Iterable[str]) -> str:
+        parts = []
+        for token in tokens:
+            if token.startswith("<") and token.endswith(">"):
+                name = token[1:-1]
+                if name.startswith("f") and name[1:].isdigit():
+                    parts.append(name)
+                    continue
+                mapped = _TOKEN_TO_KEYBOARD_KEY.get(name)
+                if mapped is None:
+                    raise ValueError(name)
+                parts.append(mapped)
+            else:
+                parts.append(token)
+        if not parts:
+            raise ValueError("empty")
+        return "+".join(parts)
