@@ -493,8 +493,8 @@ button:disabled {
 .timer-card-info {
   display: flex;
   flex-direction: column;
-  padding: 14px 16px 12px;
-  gap: 8px;
+  padding: 14px 16px 8px;
+  gap: 4px;
   min-height: 0;
 }
 
@@ -544,7 +544,7 @@ button:disabled {
 
 .repeat-button {
   min-width: 50px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   font-size: 0.82rem;
   align-self: flex-start;
 }
@@ -866,10 +866,10 @@ button:disabled {
 }
 
 .timer-progress {
-  height: 6px;
+  height: 4px;
   background: #e5e7eb;
   border-radius: 999px;
-  margin: 0 8px 16px;
+  margin: 0 6px 6px;
   overflow: hidden;
 }
 
