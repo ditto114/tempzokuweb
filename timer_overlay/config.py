@@ -180,6 +180,9 @@ class ConfigStore:
         self._path = _ensure_writable_file_path(resolved)
         self._lock = threading.Lock()
         logger.info("설정 파일 경로: %s", self._path)
+        # 초기 실행 시점에 설정 파일이 실제로 존재하도록 보장한다.
+        with self._lock:
+            self._load_or_initialize_locked()
 
     @property
     def path(self) -> Path:
@@ -187,26 +190,33 @@ class ConfigStore:
 
     def load(self) -> AppConfig:
         with self._lock:
-            if not self._path.exists():
-                default = self._create_default_config()
-                self.save(default)
-                return default
-
-            try:
-                with self._path.open("r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-            except json.JSONDecodeError as exc:
-                logger.warning("설정 파일을 읽을 수 없어 초기화합니다: %s", exc)
-                default = self._create_default_config()
-                self.save(default)
-                return default
-            return AppConfig.from_dict(data)
+            return self._load_or_initialize_locked()
 
     def save(self, config: AppConfig) -> None:
         with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("w", encoding="utf-8") as fp:
-                json.dump(config.to_dict(), fp, indent=2, ensure_ascii=False)
+            self._write_config_locked(config)
+
+    def _load_or_initialize_locked(self) -> AppConfig:
+        if not self._path.exists():
+            default = self._create_default_config()
+            self._write_config_locked(default)
+            return default
+
+        try:
+            with self._path.open("r", encoding="utf-8") as fp:
+                data = json.load(fp)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("설정 파일을 읽을 수 없어 초기화합니다: %s", exc)
+            default = self._create_default_config()
+            self._write_config_locked(default)
+            return default
+
+        return AppConfig.from_dict(data)
+
+    def _write_config_locked(self, config: AppConfig) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("w", encoding="utf-8") as fp:
+            json.dump(config.to_dict(), fp, indent=2, ensure_ascii=False)
 
     @staticmethod
     def _create_default_config() -> AppConfig:
