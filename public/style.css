@@ -632,6 +632,68 @@ button:disabled {
   color: var(--secondary);
 }
 
+.timer-card-options {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timer-card-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--secondary);
+}
+
+.timer-card-option input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+
+.timer-card-option span {
+  line-height: 1.2;
+}
+
+.timer-shortcut-assign-button {
+  width: 100%;
+  border: 1px dashed var(--border);
+  background-color: rgba(255, 255, 255, 0.8);
+  color: var(--secondary);
+  font-weight: 600;
+}
+
+.timer-shortcut-assign-button:hover {
+  background-color: #eef2ff;
+  transform: none;
+  box-shadow: none;
+}
+
+.timer-shortcut-assign-button:focus {
+  outline: 2px solid rgba(74, 108, 247, 0.25);
+  outline-offset: 2px;
+}
+
+.timer-shortcut-button-active {
+  background-color: #374151;
+  color: #ffffff;
+}
+
+.shortcut-modal-message {
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: center;
+  margin: 0;
+}
+
+.shortcut-modal-hint {
+  font-size: 0.9rem;
+  color: var(--secondary);
+  text-align: center;
+  margin: 0;
+}
+
 .timer-edit-panel {
   margin-top: 8px;
   padding: 16px;
