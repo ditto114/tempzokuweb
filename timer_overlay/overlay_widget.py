@@ -15,6 +15,7 @@ class _OverlayProgressBar(QWidget):
         super().__init__()
         self._progress = 0.0
         self._color = QColor("#ffeb3b")
+        self._transparent = False
         self.setFixedHeight(6)
 
     def set_progress(self, value: float) -> None:
@@ -25,15 +26,25 @@ class _OverlayProgressBar(QWidget):
         self._color = color
         self.update()
 
+    def set_transparent(self, transparent: bool) -> None:
+        if self._transparent == transparent:
+            return
+        self._transparent = transparent
+        self.update()
+
     def paintEvent(self, event):  # type: ignore[override]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(self._color)
+        color = QColor(self._color)
+        if self._transparent:
+            color.setAlpha(0)
+        painter.setBrush(color)
         painter.setPen(Qt.NoPen)
         width = int(self._progress * self.width())
         rect = self.rect()
         rect.setWidth(width)
-        painter.drawRoundedRect(rect, 3, 3)
+        if width > 0:
+            painter.drawRoundedRect(rect, 3, 3)
         super().paintEvent(event)
 
 
@@ -74,7 +85,7 @@ class TimerOverlayWidget(QWidget):
         self._apply_time_color(self._default_time_color)
 
         self.progress_bar = _OverlayProgressBar()
-        self.progress_bar.hide()
+        self.progress_bar.set_transparent(True)
 
         self.action_button = QPushButton()
         self.action_button.clicked.connect(self._handle_action)
@@ -88,6 +99,7 @@ class TimerOverlayWidget(QWidget):
         layout.addWidget(self.action_button)
         self.setLayout(layout)
 
+        self._hotkey: str | None = None
         self._update_running_state()
         self._update_display()
         self._display_timer.start()
@@ -104,6 +116,8 @@ class TimerOverlayWidget(QWidget):
     def _update_running_state(self) -> None:
         running = self._state.is_running
         label = "리셋" if running else "시작"
+        if self._hotkey:
+            label = f"{label}({self._hotkey})"
         self.action_button.setText(label)
 
     def _handle_action(self) -> None:
@@ -115,6 +129,13 @@ class TimerOverlayWidget(QWidget):
             action = "시작"
         if not success:
             QMessageBox.warning(self, "서버", f"타이머 {action} 요청에 실패했습니다.")
+
+    def set_hotkey(self, key: str | None) -> None:
+        formatted = key if key else None
+        if formatted == self._hotkey:
+            return
+        self._hotkey = formatted
+        self._update_running_state()
 
     def set_overlay_opacity(self, opacity: int) -> None:
         self._overlay_opacity = max(10, min(100, opacity))
@@ -138,15 +159,20 @@ class TimerOverlayWidget(QWidget):
 
         running = self._state.is_running
         if running:
-            progress = 1.0 - (remaining_ms / duration)
+            progress = remaining_ms / duration
             self.progress_bar.set_progress(progress)
             warning = remaining_ms < 60_000
             color = self._warning_time_color if warning else self._default_time_color
             self.progress_bar.set_color(color)
-            self.progress_bar.show()
+            self.progress_bar.set_transparent(False)
             self._apply_time_color(color)
         else:
-            self.progress_bar.hide()
+            if original_duration > 0:
+                self.progress_bar.set_progress(1.0)
+            else:
+                self.progress_bar.set_progress(0.0)
+            self.progress_bar.set_color(self._default_time_color)
+            self.progress_bar.set_transparent(True)
             self._apply_time_color(self._default_time_color)
 
         self._update_running_state()

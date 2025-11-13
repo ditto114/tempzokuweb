@@ -102,6 +102,7 @@ class AppConfig:
     server_host: str = "218.234.230.188"
     server_port: int = 47984
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    timer_hotkeys: Dict[str, str] = field(default_factory=dict)
     overlay_opacity: int = 85
 
     @classmethod
@@ -124,11 +125,23 @@ class AppConfig:
                 if parsed is not None:
                     timer_positions[str(timer_id)] = parsed
 
+        hotkeys: Dict[str, str] = {}
+        raw_hotkeys = data.get("timer_hotkeys")
+        if isinstance(raw_hotkeys, dict):
+            for timer_id, value in raw_hotkeys.items():
+                if not isinstance(value, str):
+                    continue
+                key_name = value.strip().lower()
+                if not key_name:
+                    continue
+                hotkeys[str(timer_id)] = key_name
+
         return cls(
             server_host=data.get("server_host", "218.234.230.188"),
             server_port=int(data.get("server_port", 47984)),
             timer_positions=timer_positions,
             overlay_opacity=int(data.get("overlay_opacity", 85)),
+            timer_hotkeys=hotkeys,
         )
 
     def to_dict(self) -> Dict:
@@ -137,6 +150,7 @@ class AppConfig:
             "server_port": self.server_port,
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
             "overlay_opacity": int(self.overlay_opacity),
+            "timer_hotkeys": dict(self.timer_hotkeys),
         }
 
 
