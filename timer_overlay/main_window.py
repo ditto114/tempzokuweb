@@ -102,7 +102,7 @@ class HotkeyCaptureDialog(QDialog):
         ):
             return
         modifiers = event.modifiers() & (
-            Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier | Qt.AltGrModifier
+            Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier
         )
         if modifiers:
             return
