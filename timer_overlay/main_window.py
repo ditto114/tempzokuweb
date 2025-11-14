@@ -28,10 +28,10 @@ from PyQt5.QtWidgets import (
     QHeaderView,
 )
 
-from .config import AppConfig, ConfigStore
-from .key_listener import GlobalKeyListener
-from .network import RemoteTimerState, ServerSettings, TimerService
-from .overlay_widget import TimerOverlayWidget
+from timer_overlay.config import AppConfig, ConfigStore
+from timer_overlay.key_listener import GlobalKeyListener
+from timer_overlay.network import RemoteTimerState, ServerSettings, TimerService
+from timer_overlay.overlay_widget import TimerOverlayWidget
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from PyQt5.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
-from .network import RemoteTimerState, TimerService
+from timer_overlay.network import RemoteTimerState, TimerService
 
 
 class _OverlayProgressBar(QWidget):

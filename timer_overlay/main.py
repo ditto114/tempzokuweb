@@ -6,8 +6,8 @@ import sys
 
 from PyQt5.QtWidgets import QApplication
 
-from .config import ConfigStore
-from .main_window import MainWindow
+from timer_overlay.config import ConfigStore
+from timer_overlay.main_window import MainWindow
 
 logging.basicConfig(
     level=logging.INFO,
