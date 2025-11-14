@@ -160,6 +160,33 @@ button.tertiary {
   border: 1px solid var(--border);
 }
 
+.icon-button {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: inherit;
+}
+
+.icon-button:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.icon-button:focus {
+  outline: none;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 .mini-button {
   padding: 6px 10px;
   font-size: 0.8rem;
@@ -172,6 +199,22 @@ button.danger {
 
 table td button + button {
   margin-left: 8px;
+}
+
+#distribution-table th.action-column,
+#distribution-table td.action-column {
+  width: 48px;
+  background-color: transparent;
+  border: none;
+  padding: 0 4px;
+}
+
+#distribution-table td.action-column {
+  text-align: center;
+}
+
+#distribution-table th.action-column {
+  pointer-events: none;
 }
 
 button:hover,

@@ -40,6 +40,82 @@ function toNumber(value, fallback = 0) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function sanitizeNumericInput(value, maxDigits = 7) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const raw = String(value);
+  let digitCount = 0;
+  let hasDecimal = false;
+  let result = '';
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+    if (char >= '0' && char <= '9') {
+      if (digitCount >= maxDigits) {
+        continue;
+      }
+      result += char;
+      digitCount += 1;
+    } else if (char === '.' && !hasDecimal) {
+      hasDecimal = true;
+      if (digitCount === 0) {
+        result += '0';
+      }
+      result += '.';
+    }
+  }
+
+  return result.endsWith('.') ? result.slice(0, -1) : result;
+}
+
+function enforcePriceInputLength(input) {
+  if (!input) {
+    return '';
+  }
+  const sanitized = sanitizeNumericInput(input.value, 7);
+  if (input.value !== sanitized) {
+    input.value = sanitized;
+  }
+  return sanitized;
+}
+
+function formatSalePriceDisplay(units) {
+  const numericUnits = Math.max(0, toNumber(units, 0));
+  if (!Number.isFinite(numericUnits) || numericUnits === 0) {
+    return '0만';
+  }
+
+  const amount = Math.floor(numericUnits * 10000);
+  if (amount === 0) {
+    return '0만';
+  }
+
+  const hundredMillion = Math.floor(amount / 100000000);
+  const remainderAmount = amount % 100000000;
+
+  if (hundredMillion === 0) {
+    const remainderUnits = remainderAmount / 10000;
+    const formattedUnits = remainderUnits.toLocaleString('ko-KR', {
+      minimumFractionDigits: remainderUnits % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    });
+    return `${formattedUnits}만`;
+  }
+
+  const parts = [`${hundredMillion.toLocaleString('ko-KR')}억`];
+  if (remainderAmount > 0) {
+    const remainderUnits = remainderAmount / 10000;
+    const formattedRemainder = remainderUnits.toLocaleString('ko-KR', {
+      minimumFractionDigits: remainderUnits % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    });
+    parts.push(`${formattedRemainder}만`);
+  }
+
+  return parts.join(' ');
+}
+
 function calculateNosujakNet(price) {
   const amount = Number(price) || 0;
   if (amount < 1_000_000) {
@@ -146,7 +222,7 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
     initialPriceUnits = toNumber(rowData.price, 0) / 10000;
   }
   if (Number.isFinite(initialPriceUnits)) {
-    priceInput.value = String(initialPriceUnits);
+    priceInput.value = sanitizeNumericInput(String(initialPriceUnits), 7);
   }
   if (isReadOnly) {
     priceInput.disabled = true;
@@ -276,6 +352,7 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
     syncSaleRowDisplay(row);
   });
   priceInput.addEventListener('input', () => {
+    enforcePriceInputLength(priceInput);
     updateRowValues();
   });
   methodSelect.addEventListener('change', () => {
@@ -308,11 +385,7 @@ function syncSaleRowDisplay(row) {
   const priceDisplay = row.querySelector('td:nth-child(2) .sale-price-display');
   if (priceDisplay) {
     const units = priceInput ? parseFloat(priceInput.value) || 0 : 0;
-    const formattedUnits = units.toLocaleString('ko-KR', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
-    priceDisplay.textContent = `${formattedUnits}만`;
+    priceDisplay.textContent = formatSalePriceDisplay(units);
   }
 
   const methodSelect = row.querySelector('td:nth-child(3) select');
@@ -541,7 +614,7 @@ function getValidMembers() {
   });
 }
 
-function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
+function calculateDistribution(totalNet, totalExpense = getTotalExpenses(), additionalIncentive = 0) {
   const memberCount = members.length;
   const finalAmounts = new Array(memberCount).fill(0);
   const participatingIndexes = members
@@ -552,14 +625,22 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
   const incentiveAmounts = members.map((member) => Math.max(0, toNumber(member.incentive, 0) * 10000));
 
   const totalIncentives = incentiveAmounts.reduce((sum, amount) => sum + amount, 0);
-  const distributable = totalNet - totalIncentives - totalExpense;
+  const extraIncentive = Math.max(0, Math.floor(additionalIncentive));
+  const combinedIncentives = totalIncentives + extraIncentive;
+  const distributable = totalNet - combinedIncentives - totalExpense;
   const baseShare = participantCount > 0 ? distributable / participantCount : 0;
 
   if (participantCount === 0) {
     incentiveAmounts.forEach((amount, index) => {
       finalAmounts[index] += amount;
     });
-    return { baseShare: 0, finalAmounts, totalIncentives, participantCount, totalExpense };
+    return {
+      baseShare: 0,
+      finalAmounts,
+      totalIncentives: combinedIncentives,
+      participantCount,
+      totalExpense,
+    };
   }
 
   participatingIndexes.forEach((index) => {
@@ -601,16 +682,22 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
     finalAmounts[index] += amount;
   });
 
-  return { baseShare, finalAmounts, totalIncentives, participantCount, totalExpense };
+  return {
+    baseShare,
+    finalAmounts,
+    totalIncentives: combinedIncentives,
+    participantCount,
+    totalExpense,
+  };
 }
 
 function updateTotals(distributionData = null) {
   const total = getTotalNet();
   const totalExpense = getTotalExpenses();
-  const calculated = distributionData || calculateDistribution(total, totalExpense);
   const dropNetTotal = getTableNetSum('drop-table');
+  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+  const calculated = distributionData || calculateDistribution(total, totalExpense, dropIncentive);
   const totalIncentiveValue = calculated.totalIncentives;
-  const totalIncentiveDisplayValue = dropNetTotal + totalIncentiveValue;
   const totalDistribution = total - totalIncentiveValue - totalExpense;
 
   const totalLabel = document.getElementById('total-net');
@@ -620,7 +707,7 @@ function updateTotals(distributionData = null) {
 
   const totalIncentiveLabel = document.getElementById('total-incentive');
   if (totalIncentiveLabel) {
-    totalIncentiveLabel.textContent = formatCurrency(totalIncentiveDisplayValue);
+    totalIncentiveLabel.textContent = formatCurrency(totalIncentiveValue);
   }
 
   const totalExpenseLabel = document.getElementById('total-expense');
@@ -719,7 +806,9 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
   const memberCount = members.length;
   const memberCountLabel = document.getElementById('member-count');
-  const calculated = distributionData || calculateDistribution(totalNet, getTotalExpenses());
+  const dropNetTotal = getTableNetSum('drop-table');
+  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+  const calculated = distributionData || calculateDistribution(totalNet, getTotalExpenses(), dropIncentive);
   if (memberCountLabel) {
     const validMembers = getValidMembers();
     const participatingCount = validMembers.filter((member) => member.participating !== false).length;
@@ -733,6 +822,8 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
   for (let i = 0; i < rowsToRender; i += 1) {
     const row = document.createElement('tr');
 
+    const actionCell = document.createElement('td');
+    actionCell.classList.add('action-column');
     const nicknameCell = document.createElement('td');
     const jobCell = document.createElement('td');
     const participantCell = document.createElement('td');
@@ -747,6 +838,21 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
     if (i < memberCount) {
       const member = members[i];
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.textContent = '⛔';
+      removeButton.classList.add('icon-button', 'danger-text');
+      removeButton.disabled = isReadOnly;
+      removeButton.addEventListener('click', () => {
+        if (isReadOnly) {
+          return;
+        }
+        members.splice(i, 1);
+        useBaseMembersForEditor = false;
+        updateTotals();
+      });
+      actionCell.appendChild(removeButton);
+
       nicknameCell.textContent = member.nickname;
       jobCell.textContent = member.job;
 
@@ -827,6 +933,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       paidCell.textContent = '';
     }
 
+    row.appendChild(actionCell);
     row.appendChild(nicknameCell);
     row.appendChild(jobCell);
     row.appendChild(participantCell);
@@ -1359,7 +1466,9 @@ function toggleSaveModal(visible) {
 function collectDistributionPayload() {
   const totalNet = getTotalNet();
   const totalExpense = getTotalExpenses();
-  const distributionData = calculateDistribution(totalNet, totalExpense);
+  const dropNetTotal = getTableNetSum('drop-table');
+  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+  const distributionData = calculateDistribution(totalNet, totalExpense, dropIncentive);
 
   return {
     dropSales: getSaleTableData('drop-table', dropSaleOptions),
