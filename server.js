@@ -383,6 +383,19 @@ app.get('/api/members', async (req, res) => {
     const [distributionRows] = await pool.query('SELECT data FROM distributions');
 
     const outstandingMap = new Map();
+    const nicknameMap = new Map();
+
+    rows.forEach((row) => {
+      const nickname = typeof row.nickname === 'string' ? row.nickname.trim() : '';
+      if (!nickname) {
+        return;
+      }
+      const key = nickname.toLowerCase();
+      if (!nicknameMap.has(key)) {
+        nicknameMap.set(key, []);
+      }
+      nicknameMap.get(key).push(row.id);
+    });
 
     if (Array.isArray(distributionRows)) {
       distributionRows.forEach((distribution) => {
@@ -406,18 +419,30 @@ app.get('/api/members', async (req, res) => {
         }
         payload.members.forEach((entry) => {
           const memberId = Number(entry.id);
-          if (!Number.isFinite(memberId)) {
+          if (entry.paid === true) {
             return;
           }
-          if (entry.paid === true || entry.participating === false) {
+          const finalAmount = Math.max(0, Number(entry.finalAmount ?? 0));
+          if (!Number.isFinite(finalAmount) || finalAmount === 0) {
             return;
           }
-          const finalAmount = Number(entry.finalAmount ?? 0);
-          if (!Number.isFinite(finalAmount)) {
-            return;
+          const nickname = typeof entry.nickname === 'string' ? entry.nickname.trim() : '';
+          const targetIds = new Set();
+
+          if (Number.isFinite(memberId)) {
+            targetIds.add(memberId);
           }
-          const current = outstandingMap.get(memberId) ?? 0;
-          outstandingMap.set(memberId, current + finalAmount);
+
+          if (nickname) {
+            const key = nickname.toLowerCase();
+            const mappedIds = nicknameMap.get(key) || [];
+            mappedIds.forEach((id) => targetIds.add(id));
+          }
+
+          targetIds.forEach((id) => {
+            const current = outstandingMap.get(id) ?? 0;
+            outstandingMap.set(id, current + finalAmount);
+          });
         });
       });
     }

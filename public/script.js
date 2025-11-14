@@ -527,18 +527,16 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
     .filter((index) => index !== null);
   const participantCount = participatingIndexes.length;
 
-  const incentiveAmounts = members.map((member) => {
-    if (member.participating === false) {
-      return 0;
-    }
-    return Math.max(0, toNumber(member.incentive, 0) * 10000);
-  });
+  const incentiveAmounts = members.map((member) => Math.max(0, toNumber(member.incentive, 0) * 10000));
 
   const totalIncentives = incentiveAmounts.reduce((sum, amount) => sum + amount, 0);
   const distributable = totalNet - totalIncentives - totalExpense;
   const baseShare = participantCount > 0 ? distributable / participantCount : 0;
 
   if (participantCount === 0) {
+    incentiveAmounts.forEach((amount, index) => {
+      finalAmounts[index] += amount;
+    });
     return { baseShare: 0, finalAmounts, totalIncentives, participantCount, totalExpense };
   }
 
@@ -577,8 +575,8 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
     }
   });
 
-  participatingIndexes.forEach((index) => {
-    finalAmounts[index] += incentiveAmounts[index];
+  incentiveAmounts.forEach((amount, index) => {
+    finalAmounts[index] += amount;
   });
 
   return { baseShare, finalAmounts, totalIncentives, participantCount, totalExpense };
@@ -711,12 +709,14 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     const nicknameCell = document.createElement('td');
     const jobCell = document.createElement('td');
     const participantCell = document.createElement('td');
+    participantCell.classList.add('checkbox-cell');
     const shareCell = document.createElement('td');
     const rateCell = document.createElement('td');
     const deductionCell = document.createElement('td');
     const incentiveCell = document.createElement('td');
     const finalCell = document.createElement('td');
     const paidCell = document.createElement('td');
+    paidCell.classList.add('checkbox-cell');
 
     if (i < memberCount) {
       const member = members[i];
@@ -727,6 +727,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       participantCheckbox.type = 'checkbox';
       participantCheckbox.checked = member.participating !== false;
       participantCheckbox.disabled = isReadOnly;
+      participantCheckbox.classList.add('distribution-checkbox');
       participantCheckbox.addEventListener('change', () => {
         member.participating = participantCheckbox.checked;
         updateTotals();
@@ -782,6 +783,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       paidCheckbox.type = 'checkbox';
       paidCheckbox.checked = member.paid === true;
       paidCheckbox.disabled = isReadOnly;
+      paidCheckbox.classList.add('distribution-checkbox');
       paidCheckbox.addEventListener('change', () => {
         member.paid = paidCheckbox.checked;
       });
@@ -1421,6 +1423,40 @@ function initMemberControls() {
   if (openExpenseButton) {
     openExpenseButton.addEventListener('click', () => {
       openExpenseModal();
+    });
+  }
+
+  const addMercenaryButton = document.getElementById('add-mercenary-row');
+  if (addMercenaryButton) {
+    addMercenaryButton.addEventListener('click', () => {
+      if (isReadOnly) {
+        return;
+      }
+      const nicknameInput = prompt('추가할 용병의 닉네임을 입력해주세요.');
+      const nickname = typeof nicknameInput === 'string' ? nicknameInput.trim() : '';
+      if (!nickname) {
+        return;
+      }
+
+      const jobInput = prompt('추가할 용병의 직업을 입력해주세요.');
+      const job = typeof jobInput === 'string' ? jobInput.trim() : '';
+      if (!job) {
+        return;
+      }
+
+      useBaseMembersForEditor = false;
+      members.push({
+        id: null,
+        nickname,
+        job,
+        included: true,
+        participating: true,
+        rate: 100,
+        deduction: 0,
+        incentive: 0,
+        paid: false,
+      });
+      updateTotals();
     });
   }
 

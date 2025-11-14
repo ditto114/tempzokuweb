@@ -257,6 +257,30 @@ button:disabled {
   width: 100%;
 }
 
+#distribution-table th:nth-child(3),
+#distribution-table th:nth-child(9),
+#distribution-table td:nth-child(3),
+#distribution-table td:nth-child(9) {
+  text-align: center;
+}
+
+#distribution-table td.checkbox-cell {
+  text-align: center;
+}
+
+#distribution-table .distribution-checkbox {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+#distribution-table td.checkbox-cell .distribution-checkbox {
+  margin: 0 auto;
+}
+
 .member-management .danger {
   width: 100%;
 }
@@ -305,6 +329,7 @@ button:disabled {
   border-radius: 12px;
   padding: 24px;
   width: min(90vw, 420px);
+  max-height: 90vh;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
   display: flex;
   flex-direction: column;
@@ -313,6 +338,8 @@ button:disabled {
 
 .member-modal {
   width: min(90vw, 640px);
+  max-height: min(90vh, 720px);
+  overflow: hidden;
 }
 
 .expense-modal {
@@ -338,7 +365,13 @@ button:disabled {
   justify-content: flex-end;
 }
 
-.member-modal table {
+.member-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.member-table-wrapper table {
   margin-bottom: 0;
 }
 
