@@ -513,12 +513,67 @@ app.delete('/api/members/:id', async (req, res) => {
   }
 });
 
+function normalizeDistributionData(raw = {}) {
+  if (!raw) {
+    return {};
+  }
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      console.error('Error parsing distribution payload:', error);
+      return {};
+    }
+  }
+  if (typeof raw === 'object') {
+    return raw;
+  }
+  return {};
+}
+
+function summarizeDistributionMembers(payload = {}) {
+  const members = Array.isArray(payload.members) ? payload.members : [];
+  let paidTrueCount = 0;
+  let paidFalseCount = 0;
+
+  members.forEach((member) => {
+    if (!member || typeof member !== 'object') {
+      return;
+    }
+    const nickname = typeof member.nickname === 'string' ? member.nickname.trim() : '';
+    const job = typeof member.job === 'string' ? member.job.trim() : '';
+    if (!(nickname || job || (member.id !== undefined && member.id !== null))) {
+      return;
+    }
+
+    if (member.paid === true) {
+      paidTrueCount += 1;
+    } else if (member.paid === false) {
+      paidFalseCount += 1;
+    }
+  });
+
+  return { paidTrueCount, paidFalseCount };
+}
+
 app.get('/api/distributions', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id, title, created_at, updated_at FROM distributions ORDER BY created_at DESC, id DESC',
+      'SELECT id, title, data, created_at, updated_at FROM distributions ORDER BY created_at DESC, id DESC',
     );
-    res.json(rows);
+    const enhanced = rows.map((row) => {
+      const payload = normalizeDistributionData(row.data);
+      const { paidTrueCount, paidFalseCount } = summarizeDistributionMembers(payload);
+      return {
+        id: row.id,
+        title: row.title,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        paid_true_count: paidTrueCount,
+        paid_false_count: paidFalseCount,
+      };
+    });
+    res.json(enhanced);
   } catch (error) {
     console.error('Error fetching distributions:', error);
     res.status(500).json({ message: '분배표 목록을 불러오는 중 오류가 발생했습니다.' });
@@ -533,15 +588,7 @@ app.get('/api/distributions/:id', async (req, res) => {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
     const distribution = rows[0];
-    let payload = distribution.data;
-    if (typeof payload === 'string') {
-      try {
-        payload = JSON.parse(payload);
-      } catch (error) {
-        console.error('Error parsing distribution payload:', error);
-        payload = {};
-      }
-    }
+    const payload = normalizeDistributionData(distribution.data);
     res.json({
       id: distribution.id,
       title: distribution.title,
@@ -590,6 +637,21 @@ app.put('/api/distributions/:id', async (req, res) => {
   } catch (error) {
     console.error('Error updating distribution:', error);
     res.status(500).json({ message: '분배표를 수정하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.delete('/api/distributions/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [result] = await pool.query('DELETE FROM distributions WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
+    }
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting distribution:', error);
+    res.status(500).json({ message: '분배표를 삭제하는 중 오류가 발생했습니다.' });
   }
 });
 
