@@ -355,7 +355,8 @@ button:disabled {
 
 .member-add-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
   gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
@@ -363,6 +364,17 @@ button:disabled {
 
 .member-add-form .form-actions {
   justify-content: flex-end;
+  align-self: stretch;
+}
+
+@media (max-width: 640px) {
+  .member-add-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .member-add-form .form-actions {
+    justify-content: flex-start;
+  }
 }
 
 .member-table-wrapper {

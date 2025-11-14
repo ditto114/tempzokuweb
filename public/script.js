@@ -512,11 +512,33 @@ function addExpenseRow() {
   renderExpenseRows();
 }
 
-function getTotalNet() {
-  return Array.from(document.querySelectorAll('.net-amount')).reduce((sum, input) => {
-    const value = parseFloat(input.dataset.value) || 0;
+function getTableNetSum(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) {
+    return 0;
+  }
+  return Array.from(table.querySelectorAll('.net-amount')).reduce((sum, input) => {
+    const value = Math.max(0, toNumber(input.dataset.value, 0));
     return sum + value;
   }, 0);
+}
+
+function getTotalNet() {
+  return ['drop-table', 'guest-table'].reduce((sum, tableId) => sum + getTableNetSum(tableId), 0);
+}
+
+function getValidMembers() {
+  return members.filter((member) => {
+    if (!member || typeof member !== 'object') {
+      return false;
+    }
+    const nickname = typeof member.nickname === 'string' ? member.nickname.trim() : '';
+    const job = typeof member.job === 'string' ? member.job.trim() : '';
+    if (nickname || job) {
+      return true;
+    }
+    return member.id !== undefined && member.id !== null;
+  });
 }
 
 function calculateDistribution(totalNet, totalExpense = getTotalExpenses()) {
@@ -586,7 +608,9 @@ function updateTotals(distributionData = null) {
   const total = getTotalNet();
   const totalExpense = getTotalExpenses();
   const calculated = distributionData || calculateDistribution(total, totalExpense);
+  const dropNetTotal = getTableNetSum('drop-table');
   const totalIncentiveValue = calculated.totalIncentives;
+  const totalIncentiveDisplayValue = dropNetTotal + totalIncentiveValue;
   const totalDistribution = total - totalIncentiveValue - totalExpense;
 
   const totalLabel = document.getElementById('total-net');
@@ -596,7 +620,7 @@ function updateTotals(distributionData = null) {
 
   const totalIncentiveLabel = document.getElementById('total-incentive');
   if (totalIncentiveLabel) {
-    totalIncentiveLabel.textContent = formatCurrency(totalIncentiveValue);
+    totalIncentiveLabel.textContent = formatCurrency(totalIncentiveDisplayValue);
   }
 
   const totalExpenseLabel = document.getElementById('total-expense');
@@ -697,7 +721,10 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
   const memberCountLabel = document.getElementById('member-count');
   const calculated = distributionData || calculateDistribution(totalNet, getTotalExpenses());
   if (memberCountLabel) {
-    memberCountLabel.textContent = String(calculated.participantCount ?? 0);
+    const validMembers = getValidMembers();
+    const participatingCount = validMembers.filter((member) => member.participating !== false).length;
+    const inactiveCount = Math.max(0, validMembers.length - participatingCount);
+    memberCountLabel.textContent = `${participatingCount} + ${inactiveCount}`;
   }
 
   const { baseShare, finalAmounts } = calculated;
@@ -1225,8 +1252,11 @@ function renderDistributionList(distributions) {
     const createdCell = document.createElement('td');
     createdCell.textContent = formatDateTime(distribution.created_at);
 
-    const updatedCell = document.createElement('td');
-    updatedCell.textContent = formatDateTime(distribution.updated_at);
+    const statusCell = document.createElement('td');
+    const paidTrueCount = Number(distribution.paid_true_count) || 0;
+    const paidFalseCount = Number(distribution.paid_false_count) || 0;
+    const trackedCount = paidTrueCount + paidFalseCount;
+    statusCell.textContent = `${trackedCount} / ${paidTrueCount}`;
 
     const actionCell = document.createElement('td');
     const viewButton = document.createElement('button');
@@ -1239,16 +1269,51 @@ function renderDistributionList(distributions) {
     editButton.classList.add('primary');
     editButton.addEventListener('click', () => openDistribution(distribution.id, false));
 
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = '삭제';
+    deleteButton.classList.add('danger');
+    deleteButton.addEventListener('click', () => deleteDistribution(distribution.id));
+
     actionCell.appendChild(viewButton);
     actionCell.appendChild(editButton);
+    actionCell.appendChild(deleteButton);
 
     row.appendChild(titleCell);
     row.appendChild(createdCell);
-    row.appendChild(updatedCell);
+    row.appendChild(statusCell);
     row.appendChild(actionCell);
 
     tableBody.appendChild(row);
   });
+}
+
+async function deleteDistribution(id) {
+  if (!id) {
+    return;
+  }
+  const confirmed = window.confirm('선택한 분배표를 삭제하시겠습니까?');
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/distributions/${id}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: '분배표를 삭제하지 못했습니다.' }));
+      throw new Error(data.message || '분배표를 삭제하지 못했습니다.');
+    }
+
+    if (currentDistributionId === id) {
+      currentDistributionId = null;
+      currentTitle = '';
+    }
+
+    await loadDistributionList();
+    alert('분배표가 삭제되었습니다.');
+  } catch (error) {
+    console.error(error);
+    alert(error.message || '분배표를 삭제하는 중 문제가 발생했습니다.');
+  }
 }
 
 async function openDistribution(id, readOnly) {
