@@ -194,49 +194,16 @@ button:disabled {
   box-shadow: none;
 }
 
-.member-form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  padding: 16px;
-  margin-bottom: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background-color: #f8fafc;
-}
-
-.member-form.hidden {
-  display: none;
-}
-
 .form-actions {
   display: flex;
   gap: 12px;
   align-items: center;
 }
 
-.member-management {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background-color: #f8fafc;
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
-.member-management.hidden {
-  display: none;
-}
-
-.member-management-header {
+.form-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-
-.member-management table {
-  margin-bottom: 0;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .totals {
@@ -252,6 +219,10 @@ button:disabled {
 }
 
 #total-incentive {
+  color: var(--danger);
+}
+
+#total-expense {
   color: var(--danger);
 }
 
@@ -338,6 +309,49 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.member-modal {
+  width: min(90vw, 640px);
+}
+
+.expense-modal {
+  width: min(90vw, 520px);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.member-add-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-add-form .form-actions {
+  justify-content: flex-end;
+}
+
+.member-modal table {
+  margin-bottom: 0;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.modal-footer-row {
+  font-weight: 600;
 }
 
 .timer-modal {
