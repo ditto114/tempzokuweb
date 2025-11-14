@@ -273,9 +273,18 @@ async function initializeDatabase() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       nickname VARCHAR(100) NOT NULL,
       job VARCHAR(100) NOT NULL,
+      included TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+  const [includedColumn] = await connection.query(
+    "SHOW COLUMNS FROM members LIKE 'included'",
+  );
+  if (includedColumn.length === 0) {
+    await connection.query(
+      'ALTER TABLE members ADD COLUMN included TINYINT(1) NOT NULL DEFAULT 1 AFTER job',
+    );
+  }
   await connection.query(`
     CREATE TABLE IF NOT EXISTS distributions (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -370,8 +379,58 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/members', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, nickname, job FROM members ORDER BY id ASC');
-    res.json(rows);
+    const [rows] = await pool.query('SELECT id, nickname, job, included FROM members ORDER BY id ASC');
+    const [distributionRows] = await pool.query('SELECT data FROM distributions');
+
+    const outstandingMap = new Map();
+
+    if (Array.isArray(distributionRows)) {
+      distributionRows.forEach((distribution) => {
+        const rawData = distribution.data;
+        let payload = rawData;
+        if (Buffer.isBuffer(rawData)) {
+          try {
+            payload = JSON.parse(rawData.toString('utf8'));
+          } catch (parseError) {
+            payload = null;
+          }
+        } else if (typeof rawData === 'string') {
+          try {
+            payload = JSON.parse(rawData);
+          } catch (parseError) {
+            payload = null;
+          }
+        }
+        if (!payload || !Array.isArray(payload.members)) {
+          return;
+        }
+        payload.members.forEach((entry) => {
+          const memberId = Number(entry.id);
+          if (!Number.isFinite(memberId)) {
+            return;
+          }
+          if (entry.paid === true || entry.participating === false) {
+            return;
+          }
+          const finalAmount = Number(entry.finalAmount ?? 0);
+          if (!Number.isFinite(finalAmount)) {
+            return;
+          }
+          const current = outstandingMap.get(memberId) ?? 0;
+          outstandingMap.set(memberId, current + finalAmount);
+        });
+      });
+    }
+
+    const payload = rows.map((row) => ({
+      id: row.id,
+      nickname: row.nickname,
+      job: row.job,
+      included: row.included === 1 || row.included === true,
+      outstandingAmount: Math.max(0, Math.floor(outstandingMap.get(row.id) ?? 0)),
+    }));
+
+    res.json(payload);
   } catch (error) {
     console.error('Error fetching members:', error);
     res.status(500).json({ message: '공대원 정보를 불러오는 중 오류가 발생했습니다.' });
@@ -387,10 +446,30 @@ app.post('/api/members', async (req, res) => {
 
   try {
     const [result] = await pool.query('INSERT INTO members (nickname, job) VALUES (?, ?)', [nickname, job]);
-    res.status(201).json({ id: result.insertId, nickname, job });
+    res.status(201).json({ id: result.insertId, nickname, job, included: true, outstandingAmount: 0 });
   } catch (error) {
     console.error('Error adding member:', error);
     res.status(500).json({ message: '공대원 정보를 저장하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.patch('/api/members/:id', async (req, res) => {
+  const { id } = req.params;
+  const { included } = req.body || {};
+
+  if (!id || typeof included !== 'boolean') {
+    return res.status(400).json({ message: '분배 포함 여부를 올바르게 전달해주세요.' });
+  }
+
+  try {
+    const [result] = await pool.query('UPDATE members SET included = ? WHERE id = ?', [included ? 1 : 0, id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
+    }
+    res.json({ id: Number(id), included });
+  } catch (error) {
+    console.error('Error updating member inclusion:', error);
+    res.status(500).json({ message: '공대원 정보를 수정하는 중 오류가 발생했습니다.' });
   }
 });
 

@@ -23,6 +23,7 @@
         <div class="card-header">
           <h2>목록</h2>
           <div class="card-actions">
+            <button id="open-member-management" class="secondary">공대원 관리</button>
             <button id="refresh-distributions" class="secondary">새로고침</button>
             <button id="list-create" class="primary">작성</button>
           </div>
@@ -85,23 +86,7 @@
           <div class="card-header">
             <h2>분배표</h2>
             <div class="card-actions">
-              <button id="add-member-btn" class="primary" data-lockable="true">공대원 추가</button>
-              <button id="manage-members-btn" class="secondary" data-lockable="true">공대원 관리</button>
-            </div>
-          </div>
-
-          <div id="member-form" class="member-form hidden">
-            <div class="form-row">
-              <label for="nickname-input">닉네임</label>
-              <input id="nickname-input" type="text" placeholder="닉네임" />
-            </div>
-            <div class="form-row">
-              <label for="job-input">직업</label>
-              <input id="job-input" type="text" placeholder="직업" />
-            </div>
-            <div class="form-actions">
-              <button id="save-member" class="primary">저장</button>
-              <button id="cancel-member" class="secondary">취소</button>
+              <button id="open-expense-modal" class="secondary mini-button">지출비용 관리</button>
             </div>
           </div>
 
@@ -109,25 +94,8 @@
             <div class="totals-row">공대원 수: <span id="member-count">0</span></div>
             <div class="totals-row">총 수익: <span id="total-net">0</span></div>
             <div class="totals-row">총 인센티브: <span id="total-incentive">0</span></div>
+            <div class="totals-row">총 지출비용: <span id="total-expense">0</span></div>
             <div class="totals-row">총 분배금: <span id="total-distribution">0</span></div>
-          </div>
-
-          <div id="member-management" class="member-management hidden">
-            <div class="member-management-header">
-              <h3>공대원 관리</h3>
-              <button id="close-management" class="secondary">닫기</button>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>닉네임</th>
-                  <th>직업</th>
-                  <th>삭제</th>
-                </tr>
-              </thead>
-              <tbody>
-              </tbody>
-            </table>
           </div>
 
           <table id="distribution-table">
@@ -135,11 +103,13 @@
               <tr>
                 <th>닉네임</th>
                 <th>직업</th>
+                <th>분배인원</th>
                 <th>분배금</th>
                 <th>분배율</th>
                 <th>차감금(만)</th>
                 <th>인센티브(만)</th>
                 <th>최종 분배금</th>
+                <th>지급여부</th>
               </tr>
             </thead>
             <tbody>
@@ -163,6 +133,64 @@
       <div class="modal-actions">
         <button id="cancel-save" class="secondary">취소</button>
         <button id="confirm-save" class="primary">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="member-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="member-modal-title">
+    <div class="modal-content member-modal">
+      <div class="modal-header">
+        <h3 id="member-modal-title">공대원 관리</h3>
+        <button id="close-member-modal" class="secondary">닫기</button>
+      </div>
+      <form id="member-add-form" class="member-add-form">
+        <div class="form-row">
+          <label for="member-nickname-input">닉네임</label>
+          <input id="member-nickname-input" type="text" placeholder="닉네임" required />
+        </div>
+        <div class="form-row">
+          <label for="member-job-input">직업</label>
+          <input id="member-job-input" type="text" placeholder="직업" required />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="primary">추가</button>
+        </div>
+      </form>
+      <table>
+        <thead>
+          <tr>
+            <th>닉네임</th>
+            <th>직업</th>
+            <th>분배인원</th>
+            <th>미수령 분배금</th>
+            <th>삭제</th>
+          </tr>
+        </thead>
+        <tbody id="member-management-body">
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="expense-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="expense-modal-title">
+    <div class="modal-content expense-modal">
+      <div class="modal-header">
+        <h3 id="expense-modal-title">지출비용 관리</h3>
+        <button id="close-expense-modal" class="secondary">닫기</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>내용</th>
+            <th>지출비용(만)</th>
+          </tr>
+        </thead>
+        <tbody id="expense-table-body">
+        </tbody>
+      </table>
+      <div class="modal-footer">
+        <div class="modal-footer-row">합계: <span id="expense-sum">0</span></div>
+        <button id="add-expense-row" class="secondary" type="button" data-lockable="true">행 추가</button>
       </div>
     </div>
   </div>
