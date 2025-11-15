@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const mysql = require('mysql2/promise');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 47984;
@@ -16,6 +17,10 @@ const databaseName = process.env.DB_NAME || 'raid_distribution';
 
 let pool;
 
+const SESSION_COOKIE_NAME = 'sessionToken';
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+const sessions = new Map();
+
 const DEFAULT_TIMER_DURATION_MS = 15 * 60 * 1000;
 const MIN_TIMER_DURATION_MS = 5 * 1000;
 const MAX_TIMER_DURATION_MS = 3 * 60 * 60 * 1000;
@@ -26,6 +31,81 @@ const timers = new Map();
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
 const GRID_SETTINGS_RANGE = Object.freeze({ min: 1, max: 6 });
 let timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+const LOGIN_PAGE_PATH = '/login.html';
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(String(password ?? '')).digest('hex');
+}
+
+function parseCookies(req) {
+  const header = req.headers?.cookie;
+  if (!header) {
+    return {};
+  }
+
+  return header.split(';').reduce((acc, pair) => {
+    const [name, ...rest] = pair.trim().split('=');
+    if (!name) {
+      return acc;
+    }
+    const value = rest.join('=');
+    acc[name] = decodeURIComponent(value || '');
+    return acc;
+  }, {});
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  const maxAgeSeconds = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  const cookie = `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  res.setHeader('Set-Cookie', cookie);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+
+function getSessionInfo(req) {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) {
+    return null;
+  }
+  const session = sessions.get(token);
+  if (!session) {
+    return null;
+  }
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return { token, session };
+}
+
+function refreshSession(res, token, session) {
+  session.expiresAt = Date.now() + SESSION_DURATION_MS;
+  sessions.set(token, session);
+  setSessionCookie(res, token, session.expiresAt);
+}
+
+function createSession(username) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const session = {
+    username,
+    expiresAt: Date.now() + SESSION_DURATION_MS,
+  };
+  sessions.set(token, session);
+  return { token, session };
+}
+
+function requireApiAuth(req, res, next) {
+  const sessionInfo = getSessionInfo(req);
+  if (!sessionInfo) {
+    return res.status(401).json({ message: '로그인이 필요합니다.' });
+  }
+  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  req.session = { username: sessionInfo.session.username };
+  return next();
+}
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -295,6 +375,25 @@ async function initializeDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
   await connection.query(`
+    CREATE TABLE IF NOT EXISTS admins (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(100) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+  const [existingAdminRows] = await connection.query(
+    'SELECT id FROM admins WHERE username = ? LIMIT 1',
+    ['cass'],
+  );
+  if (!Array.isArray(existingAdminRows) || existingAdminRows.length === 0) {
+    const passwordHash = hashPassword('9799');
+    await connection.query(
+      'INSERT INTO admins (username, password_hash) VALUES (?, ?)',
+      ['cass', passwordHash],
+    );
+  }
+  await connection.query(`
     CREATE TABLE IF NOT EXISTS timers (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
@@ -375,9 +474,75 @@ async function initializeDatabase() {
 }
 
 app.use(express.json());
+
+app.get(['/login', '/login.html'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get(['/distribution', '/distribution.html'], (req, res) => {
+  const sessionInfo = getSessionInfo(req);
+  if (!sessionInfo) {
+    const redirectTarget = encodeURIComponent(req.originalUrl || '/distribution.html');
+    return res.redirect(`${LOGIN_PAGE_PATH}?redirect=${redirectTarget}`);
+  }
+  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  return res.sendFile(path.join(__dirname, 'public', 'distribution.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/api/members', async (req, res) => {
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body ?? {};
+
+  if (!username || !password) {
+    return res.status(400).json({ message: '아이디와 비밀번호를 입력해주세요.' });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, username, password_hash FROM admins WHERE username = ? LIMIT 1',
+      [username],
+    );
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(401).json({ message: '아이디 또는 비밀번호가 올바르지 않습니다.' });
+    }
+
+    const admin = rows[0];
+    const hashedInput = hashPassword(password);
+
+    if (admin.password_hash !== hashedInput) {
+      return res.status(401).json({ message: '아이디 또는 비밀번호가 올바르지 않습니다.' });
+    }
+
+    const { token, session } = createSession(admin.username);
+    setSessionCookie(res, token, session.expiresAt);
+    return res.json({ authenticated: true, username: admin.username });
+  } catch (error) {
+    console.error('Error during login:', error);
+    return res.status(500).json({ message: '로그인 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/api/logout', (req, res) => {
+  const sessionInfo = getSessionInfo(req);
+  if (sessionInfo) {
+    sessions.delete(sessionInfo.token);
+  }
+  clearSessionCookie(res);
+  res.status(204).send();
+});
+
+app.get('/api/session', (req, res) => {
+  const sessionInfo = getSessionInfo(req);
+  if (!sessionInfo) {
+    return res.status(401).json({ authenticated: false });
+  }
+  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  return res.json({ authenticated: true, username: sessionInfo.session.username });
+});
+
+app.get('/api/members', requireApiAuth, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, nickname, job, included FROM members ORDER BY id ASC');
     const [distributionRows] = await pool.query('SELECT data FROM distributions');
@@ -462,7 +627,7 @@ app.get('/api/members', async (req, res) => {
   }
 });
 
-app.post('/api/members', async (req, res) => {
+app.post('/api/members', requireApiAuth, async (req, res) => {
   const { nickname, job } = req.body;
 
   if (!nickname || !job) {
@@ -478,7 +643,7 @@ app.post('/api/members', async (req, res) => {
   }
 });
 
-app.patch('/api/members/:id', async (req, res) => {
+app.patch('/api/members/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
   const { included } = req.body || {};
 
@@ -498,7 +663,7 @@ app.patch('/api/members/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/members/:id', async (req, res) => {
+app.delete('/api/members/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -556,7 +721,7 @@ function summarizeDistributionMembers(payload = {}) {
   return { paidTrueCount, paidFalseCount };
 }
 
-app.get('/api/distributions', async (req, res) => {
+app.get('/api/distributions', requireApiAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT id, title, data, created_at, updated_at FROM distributions ORDER BY created_at DESC, id DESC',
@@ -580,7 +745,7 @@ app.get('/api/distributions', async (req, res) => {
   }
 });
 
-app.get('/api/distributions/:id', async (req, res) => {
+app.get('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
   try {
     const [rows] = await pool.query('SELECT id, title, data, created_at, updated_at FROM distributions WHERE id = ?', [id]);
@@ -602,7 +767,7 @@ app.get('/api/distributions/:id', async (req, res) => {
   }
 });
 
-app.post('/api/distributions', async (req, res) => {
+app.post('/api/distributions', requireApiAuth, async (req, res) => {
   const { title, data } = req.body;
 
   if (!title || !data) {
@@ -619,7 +784,7 @@ app.post('/api/distributions', async (req, res) => {
   }
 });
 
-app.put('/api/distributions/:id', async (req, res) => {
+app.put('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
   const { title, data } = req.body;
 
@@ -640,7 +805,7 @@ app.put('/api/distributions/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/distributions/:id', async (req, res) => {
+app.delete('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
