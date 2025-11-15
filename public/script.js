@@ -28,6 +28,65 @@ let expenses = [];
 const DEFAULT_EXPENSE_ROWS = 2;
 const managedModalIds = ['save-modal', 'member-modal', 'expense-modal'];
 
+const LOGIN_PAGE_PATH = '/login.html';
+
+function buildLoginRedirectPath() {
+  const path = window.location.pathname || '/distribution.html';
+  const search = window.location.search || '';
+  return `${path}${search}`;
+}
+
+function redirectToLogin() {
+  const redirectTarget = encodeURIComponent(buildLoginRedirectPath());
+  window.location.href = `${LOGIN_PAGE_PATH}?redirect=${redirectTarget}`;
+}
+
+async function fetchWithAuth(url, options) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    redirectToLogin();
+    throw new Error('UNAUTHORIZED');
+  }
+  return response;
+}
+
+async function ensureAuthenticated() {
+  try {
+    const response = await fetch('/api/session');
+    if (!response.ok) {
+      redirectToLogin();
+      return false;
+    }
+    const data = await response.json();
+    if (!data?.authenticated) {
+      redirectToLogin();
+      return false;
+    }
+    return true;
+  } catch (error) {
+    redirectToLogin();
+    return false;
+  }
+}
+
+function initAuthControls() {
+  const logoutButton = document.getElementById('logout-button');
+  if (logoutButton) {
+    logoutButton.addEventListener('click', async () => {
+      try {
+        const response = await fetch('/api/logout', { method: 'POST' });
+        if (response.ok || response.status === 401) {
+          window.location.href = '/';
+          return;
+        }
+      } catch (error) {
+        console.error('로그아웃 중 오류가 발생했습니다.', error);
+      }
+      window.location.href = LOGIN_PAGE_PATH;
+    });
+  }
+}
+
 function formatCurrency(value) {
   const number = Number(value);
   const safeNumber = Number.isFinite(number) ? number : 0;
@@ -1038,7 +1097,7 @@ async function updateMemberIncluded(memberId, included) {
     return;
   }
   try {
-    const response = await fetch(`/api/members/${memberId}`, {
+    const response = await fetchWithAuth(`/api/members/${memberId}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -1059,7 +1118,7 @@ async function updateMemberIncluded(memberId, included) {
 
 async function fetchMembers() {
   try {
-    const response = await fetch('/api/members');
+    const response = await fetchWithAuth('/api/members');
     if (!response.ok) {
       throw new Error('공대원 목록을 불러오지 못했습니다.');
     }
@@ -1121,7 +1180,7 @@ async function saveMember(event = null) {
   }
 
   try {
-    const response = await fetch('/api/members', {
+    const response = await fetchWithAuth('/api/members', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1153,7 +1212,7 @@ async function deleteMember(id) {
   }
 
   try {
-    const response = await fetch(`/api/members/${id}`, {
+    const response = await fetchWithAuth(`/api/members/${id}`, {
       method: 'DELETE',
     });
 
@@ -1320,7 +1379,7 @@ function updateNavState() {
 
 async function loadDistributionList() {
   try {
-    const response = await fetch('/api/distributions');
+    const response = await fetchWithAuth('/api/distributions');
     if (!response.ok) {
       throw new Error('분배표 목록을 불러오지 못했습니다.');
     }
@@ -1404,7 +1463,7 @@ async function deleteDistribution(id) {
   }
 
   try {
-    const response = await fetch(`/api/distributions/${id}`, { method: 'DELETE' });
+    const response = await fetchWithAuth(`/api/distributions/${id}`, { method: 'DELETE' });
     if (!response.ok) {
       const data = await response.json().catch(() => ({ message: '분배표를 삭제하지 못했습니다.' }));
       throw new Error(data.message || '분배표를 삭제하지 못했습니다.');
@@ -1425,7 +1484,7 @@ async function deleteDistribution(id) {
 
 async function openDistribution(id, readOnly) {
   try {
-    const response = await fetch(`/api/distributions/${id}`);
+    const response = await fetchWithAuth(`/api/distributions/${id}`);
     if (!response.ok) {
       throw new Error('분배표를 불러오지 못했습니다.');
     }
@@ -1514,7 +1573,7 @@ async function handleSaveDistribution() {
   const payload = collectDistributionPayload();
 
   try {
-    const response = await fetch(currentDistributionId ? `/api/distributions/${currentDistributionId}` : '/api/distributions', {
+    const response = await fetchWithAuth(currentDistributionId ? `/api/distributions/${currentDistributionId}` : '/api/distributions', {
       method: currentDistributionId ? 'PUT' : 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1711,6 +1770,12 @@ function initMemberControls() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  const authenticated = await ensureAuthenticated();
+  if (!authenticated) {
+    return;
+  }
+
+  initAuthControls();
   currentTitle = generateDefaultTitle();
   initTables();
   initMemberControls();
