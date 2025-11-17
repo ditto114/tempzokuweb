@@ -39,6 +39,7 @@ class RemoteTimerState:
     display_order: int
     end_time_ms: Optional[int] = None
     updated_at_ms: Optional[int] = None
+    server_clock_offset_ms: int = 0
     synced_at_monotonic: float = field(default_factory=time.monotonic)
 
     @classmethod
@@ -78,7 +79,7 @@ class RemoteTimerState:
 
     @property
     def remaining_seconds(self) -> int:
-        return max(0, int(self.remaining_ms // 1000))
+        return max(0, int(self.remaining_ms_at() // 1000))
 
     def remaining_ms_at(self, monotonic_time: Optional[float] = None) -> int:
         reference = monotonic_time if monotonic_time is not None else time.monotonic()
@@ -86,14 +87,15 @@ class RemoteTimerState:
         if not self.is_running:
             return base_remaining
         if self.end_time_ms is not None:
-            remaining = int(self.end_time_ms - time.time() * 1000)
+            server_now_ms = int(time.time() * 1000 + self.server_clock_offset_ms)
+            remaining = int(self.end_time_ms - server_now_ms)
             return max(0, remaining)
         elapsed = int((reference - self.synced_at_monotonic) * 1000)
         return max(0, base_remaining - max(0, elapsed))
 
     @property
     def formatted_remaining(self) -> str:
-        return self.format_duration(self.remaining_ms)
+        return self.format_duration(self.remaining_ms_at())
 
     def formatted_remaining_at(self, monotonic_time: Optional[float] = None) -> str:
         remaining = self.remaining_ms_at(monotonic_time)

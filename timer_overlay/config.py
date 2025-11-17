@@ -104,6 +104,7 @@ class AppConfig:
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     timer_hotkeys: Dict[str, str] = field(default_factory=dict)
     overlay_opacity: int = 85
+    overlay_scale: int = 1
 
     @classmethod
     def from_dict(cls, data: Dict) -> "AppConfig":
@@ -142,6 +143,7 @@ class AppConfig:
             timer_positions=timer_positions,
             overlay_opacity=int(data.get("overlay_opacity", 85)),
             timer_hotkeys=hotkeys,
+            overlay_scale=int(data.get("overlay_scale", 1)),
         )
 
     def to_dict(self) -> Dict:
@@ -151,6 +153,7 @@ class AppConfig:
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
             "overlay_opacity": int(self.overlay_opacity),
             "timer_hotkeys": dict(self.timer_hotkeys),
+            "overlay_scale": int(self.overlay_scale),
         }
 
 

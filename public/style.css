@@ -332,6 +332,11 @@ button:disabled {
   margin: 0 auto;
 }
 
+#distribution-table.hide-action-column th.action-column,
+#distribution-table.hide-action-column td.action-column {
+  display: none;
+}
+
 .member-management .danger {
   width: 100%;
 }
@@ -351,7 +356,18 @@ button:disabled {
 .save-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 24px;
+}
+
+.save-actions input[type='text'] {
+  min-width: 220px;
+}
+
+.save-status {
+  color: var(--success);
+  font-size: 14px;
 }
 
 .modal-backdrop {

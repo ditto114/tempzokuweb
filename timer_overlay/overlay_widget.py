@@ -11,12 +11,14 @@ from timer_overlay.network import RemoteTimerState, TimerService
 class _OverlayProgressBar(QWidget):
     """타이머 진행 상황을 표시하는 간단한 바."""
 
-    def __init__(self) -> None:
+    def __init__(self, scale: float = 1.0) -> None:
         super().__init__()
         self._progress = 0.0
         self._color = QColor("#ffeb3b")
         self._transparent = False
-        self.setFixedHeight(6)
+        self._base_height = 6
+        self._scale = scale
+        self._apply_scale()
 
     def set_progress(self, value: float) -> None:
         self._progress = max(0.0, min(1.0, value))
@@ -31,6 +33,17 @@ class _OverlayProgressBar(QWidget):
             return
         self._transparent = transparent
         self.update()
+
+    def set_scale(self, scale: float) -> None:
+        if self._scale == scale:
+            return
+        self._scale = scale
+        self._apply_scale()
+
+    def _apply_scale(self) -> None:
+        scale_factor = 1 + 0.1 * (self._scale - 1)
+        height = int(self._base_height * scale_factor)
+        self.setFixedHeight(max(4, height))
 
     def paintEvent(self, event):  # type: ignore[override]
         painter = QPainter(self)
@@ -53,7 +66,7 @@ class TimerOverlayWidget(QWidget):
 
     position_changed = pyqtSignal(int, int)
 
-    def __init__(self, service: TimerService, state: RemoteTimerState):
+    def __init__(self, service: TimerService, state: RemoteTimerState, *, scale: int = 1):
         super().__init__()
         self._service = service
         self._state = state
@@ -63,6 +76,12 @@ class TimerOverlayWidget(QWidget):
         self._display_timer.setInterval(200)
         self._display_timer.timeout.connect(self._update_display)
         self._overlay_opacity = 85
+        self._base_name_font_size = 12
+        self._base_time_font_size = 18
+        self._base_margin = 12
+        self._base_spacing = 8
+        self._base_button_height = 36
+        self._scale = max(1, min(5, scale))
 
         self.setWindowFlags(
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
@@ -72,27 +91,27 @@ class TimerOverlayWidget(QWidget):
 
         self.name_label = QLabel(state.name)
         self.name_label.setAlignment(Qt.AlignCenter)
-        name_font = QFont("Arial", 12, QFont.Bold)
+        name_font = QFont("Arial", self._base_name_font_size, QFont.Bold)
         self.name_label.setFont(name_font)
         self.name_label.setStyleSheet("color: white;")
 
         self.time_label = QLabel(state.formatted_remaining)
         self.time_label.setAlignment(Qt.AlignCenter)
-        time_font = QFont("Consolas", 18, QFont.Bold)
+        time_font = QFont("Consolas", self._base_time_font_size, QFont.Bold)
         self.time_label.setFont(time_font)
         self._default_time_color = QColor("#ffeb3b")
         self._warning_time_color = QColor("#ff5252")
         self._apply_time_color(self._default_time_color)
 
-        self.progress_bar = _OverlayProgressBar()
+        self.progress_bar = _OverlayProgressBar(self._scale)
         self.progress_bar.set_transparent(True)
 
         self.action_button = QPushButton()
         self.action_button.clicked.connect(self._handle_action)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(self._base_margin, self._base_margin, self._base_margin, self._base_margin)
+        layout.setSpacing(self._base_spacing)
         layout.addWidget(self.name_label)
         layout.addWidget(self.time_label)
         layout.addWidget(self.progress_bar)
@@ -100,6 +119,7 @@ class TimerOverlayWidget(QWidget):
         self.setLayout(layout)
 
         self._hotkey: str | None = None
+        self._apply_scale()
         self._update_running_state()
         self._update_display()
         self._display_timer.start()
@@ -140,6 +160,34 @@ class TimerOverlayWidget(QWidget):
     def set_overlay_opacity(self, opacity: int) -> None:
         self._overlay_opacity = max(10, min(100, opacity))
         self.update()
+
+    def set_scale(self, scale: int) -> None:
+        clamped = max(1, min(5, scale))
+        if self._scale == clamped:
+            return
+        self._scale = clamped
+        self._apply_scale()
+
+    def _apply_scale(self) -> None:
+        scale_factor = 1 + 0.1 * (self._scale - 1)
+        name_font = self.name_label.font()
+        name_font.setPointSize(int(self._base_name_font_size + (self._scale - 1)))
+        self.name_label.setFont(name_font)
+
+        time_font = self.time_label.font()
+        time_font.setPointSize(int(self._base_time_font_size + (self._scale - 1)))
+        self.time_label.setFont(time_font)
+
+        layout: QVBoxLayout = self.layout()  # type: ignore[assignment]
+        margin = int(self._base_margin * scale_factor)
+        spacing = int(self._base_spacing * scale_factor)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(spacing)
+
+        self.progress_bar.set_scale(self._scale)
+        button_height = int(self._base_button_height * scale_factor)
+        self.action_button.setFixedHeight(max(30, button_height))
+        self.adjustSize()
 
     def _update_display(self) -> None:
         remaining_ms = self._state.remaining_ms_at()
