@@ -80,7 +80,7 @@ class TimerOverlayWidget(QWidget):
         self._base_time_font_size = 18
         self._base_margin = 12
         self._base_spacing = 8
-        self._base_button_height = 36
+        self._base_button_height = 4
         self._scale = max(1, min(5, scale))
 
         self.setWindowFlags(
