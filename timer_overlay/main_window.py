@@ -125,22 +125,16 @@ class MainWindow(QMainWindow):
 
         self.store = store
         self.config = store.load()
+        self._server_clock_offset_ms = 0
+
         self.status_label = QLabel("서버에 연결되지 않았습니다.")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-        self._default_key_status = "단축키 대기"
-        self.key_status_label = QLabel(self._default_key_status)
-        self.key_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.key_status_label.setStyleSheet("color: #bdbdbd;")
-        self._key_status_reset_timer = QTimer(self)
-        self._key_status_reset_timer.setSingleShot(True)
-        self._key_status_reset_timer.timeout.connect(self._reset_key_status)
 
         self.opacity_slider = QSlider(Qt.Horizontal)
         self.opacity_slider.setRange(30, 100)
         initial_opacity = max(30, min(100, self.config.overlay_opacity))
         self.opacity_slider.setValue(initial_opacity)
-        self.opacity_slider.setFixedWidth(180)
+        self.opacity_slider.setFixedWidth(140)
         self.opacity_slider.valueChanged.connect(self._handle_opacity_changed)
         if self.config.overlay_opacity != initial_opacity:
             self.config.overlay_opacity = initial_opacity
@@ -149,13 +143,33 @@ class MainWindow(QMainWindow):
         self.opacity_label = QLabel("오버레이 투명도")
         self.opacity_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
+        self.scale_slider = QSlider(Qt.Horizontal)
+        self.scale_slider.setRange(1, 5)
+        initial_scale = max(1, min(5, getattr(self.config, "overlay_scale", 1)))
+        self.scale_slider.setValue(initial_scale)
+        self.scale_slider.setFixedWidth(120)
+        self.scale_slider.valueChanged.connect(self._handle_scale_changed)
+        if getattr(self.config, "overlay_scale", 1) != initial_scale:
+            self.config.overlay_scale = initial_scale
+            self.store.save(self.config)
+
+        self.scale_label = QLabel("오버레이 크기")
+        self.scale_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        self.clock_label = QLabel("")
+        self.clock_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.clock_label.setStyleSheet("color: #bdbdbd;")
+
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.status_label)
         header_layout.addStretch(1)
         header_layout.addWidget(self.opacity_label)
         header_layout.addWidget(self.opacity_slider)
+        header_layout.addSpacing(8)
+        header_layout.addWidget(self.scale_label)
+        header_layout.addWidget(self.scale_slider)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.key_status_label)
+        header_layout.addWidget(self.clock_label)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["이름", "남은 시간", "상태", "단축키"])
@@ -199,6 +213,12 @@ class MainWindow(QMainWindow):
         self._table_update_timer.setInterval(250)
         self._table_update_timer.timeout.connect(self._update_table_remaining)
         self._table_update_timer.start()
+
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(1000)
+        self._clock_timer.timeout.connect(self._update_clock_label)
+        self._clock_timer.start()
+        self._update_clock_label()
 
         QTimer.singleShot(0, self._initialize_connection)
 
@@ -275,6 +295,7 @@ class MainWindow(QMainWindow):
             logger.debug("타이머 데이터 형식이 올바르지 않습니다: %s", payload)
             return
 
+        self._update_server_clock_offset(timers_data)
         updated_states: Dict[str, RemoteTimerState] = {}
         for item in timers_data:
             try:
@@ -282,6 +303,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:  # pylint: disable=broad-except
                 logger.debug("타이머 데이터 파싱 실패: %s", exc)
                 continue
+            state.server_clock_offset_ms = self._server_clock_offset_ms
             updated_states[state.id] = state
 
         self.timer_states = updated_states
@@ -298,6 +320,7 @@ class MainWindow(QMainWindow):
             overlay.update_state(state)
             overlay.set_overlay_opacity(self.config.overlay_opacity)
             overlay.set_hotkey(self._format_hotkey(self.config.timer_hotkeys.get(timer_id)))
+            overlay.set_scale(getattr(self.config, "overlay_scale", 1))
 
     def _cleanup_missing_timers(self, states: Dict[str, RemoteTimerState]) -> None:
         valid_ids = set(states.keys())
@@ -450,7 +473,9 @@ class MainWindow(QMainWindow):
             self._show_overlay(state)
 
     def _show_overlay(self, state: RemoteTimerState) -> None:
-        overlay = TimerOverlayWidget(self.timer_service, state)
+        overlay = TimerOverlayWidget(
+            self.timer_service, state, scale=getattr(self.config, "overlay_scale", 1)
+        )
         overlay.position_changed.connect(
             lambda x, y, timer_id=state.id: self._on_overlay_moved(timer_id, x, y)
         )
@@ -487,8 +512,6 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_hotkey(key)
         if normalized is None:
             return
-        display = self._format_hotkey(normalized) or key.upper()
-        triggered = False
         now = time.monotonic()
         for timer_id, assigned in self.config.timer_hotkeys.items():
             if timer_id not in self.overlays:
@@ -511,17 +534,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "서버", f"타이머 {action} 요청에 실패했습니다.")
                 continue
             self._hotkey_cooldowns[timer_id] = now
-            triggered = True
-        if triggered:
-            self.key_status_label.setStyleSheet("color: #4caf50;")
-        else:
-            self.key_status_label.setStyleSheet("color: #ff9800;")
-        self.key_status_label.setText(f"{display} 감지")
-        self._key_status_reset_timer.start(1500)
-
-    def _reset_key_status(self) -> None:
-        self.key_status_label.setText(self._default_key_status)
-        self.key_status_label.setStyleSheet("color: #bdbdbd;")
 
     # 상태 업데이트 --------------------------------------------------------
     def _handle_connection_state(self, connected: bool, message: str) -> None:
@@ -548,6 +560,7 @@ class MainWindow(QMainWindow):
         self.timer_service.stop()
         self.key_listener.stop()
         self._table_update_timer.stop()
+        self._clock_timer.stop()
         for overlay in self.overlays.values():
             overlay.close()
         super().closeEvent(event)
@@ -590,3 +603,47 @@ class MainWindow(QMainWindow):
             overlay.set_overlay_opacity(clamped)
         if opacity_changed:
             logger.info("오버레이 투명도 변경: %s", clamped)
+
+    def _handle_scale_changed(self, value: int) -> None:
+        clamped = max(1, min(5, value))
+        if getattr(self.config, "overlay_scale", 1) == clamped:
+            scale_changed = False
+        else:
+            self.config.overlay_scale = clamped
+            self.store.save(self.config)
+            scale_changed = True
+        for overlay in self.overlays.values():
+            overlay.set_scale(clamped)
+        if scale_changed:
+            logger.info("오버레이 크기 변경: %s", clamped)
+
+    def _update_server_clock_offset(self, timers_data: list[Dict]) -> None:
+        offsets: list[int] = []
+        now_ms = int(time.time() * 1000)
+        for item in timers_data:
+            updated_raw = item.get("updatedAt")
+            try:
+                updated_at = int(updated_raw)
+            except (TypeError, ValueError):
+                continue
+            offsets.append(updated_at - now_ms)
+
+        if not offsets:
+            return
+
+        new_offset = int(sum(offsets) / len(offsets))
+        if new_offset == self._server_clock_offset_ms:
+            return
+
+        self._server_clock_offset_ms = new_offset
+        for state in self.timer_states.values():
+            state.server_clock_offset_ms = new_offset
+        self._update_clock_label()
+
+    def _update_clock_label(self) -> None:
+        device_now = time.localtime()
+        device_text = time.strftime("%H:%M:%S", device_now)
+        server_ts = time.time() + (self._server_clock_offset_ms / 1000.0)
+        server_now = time.localtime(server_ts)
+        server_text = time.strftime("%H:%M:%S", server_now)
+        self.clock_label.setText(f"서버 {server_text}  기기 {device_text}")

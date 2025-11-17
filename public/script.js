@@ -26,7 +26,9 @@ let useBaseMembersForEditor = true;
 let expenses = [];
 
 const DEFAULT_EXPENSE_ROWS = 2;
-const managedModalIds = ['save-modal', 'member-modal', 'expense-modal'];
+const managedModalIds = ['member-modal', 'expense-modal'];
+
+let saveFeedbackTimeout = null;
 
 const LOGIN_PAGE_PATH = '/login.html';
 
@@ -245,6 +247,11 @@ function setPageTitle(title) {
     titleElement.textContent = '카스공대 혼테일 분배표';
   } else {
     titleElement.textContent = title || generateDefaultTitle();
+  }
+
+  const inlineTitleInput = document.getElementById('save-title-inline');
+  if (inlineTitleInput && currentView === 'editor') {
+    inlineTitleInput.value = title || generateDefaultTitle();
   }
 }
 
@@ -860,6 +867,11 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
   const tableBody = document.querySelector('#distribution-table tbody');
   if (!tableBody) {
     return;
+  }
+
+  const distributionTable = document.getElementById('distribution-table');
+  if (distributionTable) {
+    distributionTable.classList.toggle('hide-action-column', isReadOnly);
   }
   tableBody.innerHTML = '';
 
@@ -1503,23 +1515,19 @@ async function openDistribution(id, readOnly) {
   }
 }
 
-function toggleSaveModal(visible) {
-  const modal = document.getElementById('save-modal');
-  const titleInput = document.getElementById('save-title-input');
-  if (!modal || !titleInput) {
+function showSaveCompleteMessage() {
+  const message = document.getElementById('save-feedback');
+  if (!message) {
     return;
   }
 
-  if (visible) {
-    titleInput.value = currentTitle || generateDefaultTitle();
-    closeMemberModal();
-    closeExpenseModal();
-    modal.classList.remove('hidden');
-    titleInput.focus();
-  } else {
-    modal.classList.add('hidden');
+  message.classList.remove('hidden');
+  if (saveFeedbackTimeout) {
+    clearTimeout(saveFeedbackTimeout);
   }
-  updateBackdropVisibility();
+  saveFeedbackTimeout = setTimeout(() => {
+    message.classList.add('hidden');
+  }, 1000);
 }
 
 function collectDistributionPayload() {
@@ -1559,7 +1567,7 @@ function collectDistributionPayload() {
 }
 
 async function handleSaveDistribution() {
-  const titleInput = document.getElementById('save-title-input');
+  const titleInput = document.getElementById('save-title-inline');
   if (!titleInput) {
     return;
   }
@@ -1590,8 +1598,8 @@ async function handleSaveDistribution() {
     currentDistributionId = saved.id;
     currentTitle = saved.title;
     setPageTitle(currentTitle);
-    toggleSaveModal(false);
-    alert('분배표가 저장되었습니다.');
+    titleInput.value = currentTitle;
+    showSaveCompleteMessage();
     await loadDistributionList();
     updateNavState();
   } catch (error) {
@@ -1714,7 +1722,6 @@ function initMemberControls() {
   const navListButton = document.getElementById('nav-list');
   if (navListButton) {
     navListButton.addEventListener('click', () => {
-      toggleSaveModal(false);
       closeMemberModal();
       closeExpenseModal();
       showListView();
@@ -1741,20 +1748,6 @@ function initMemberControls() {
       if (isReadOnly) {
         return;
       }
-      toggleSaveModal(true);
-    });
-  }
-
-  const cancelSaveButton = document.getElementById('cancel-save');
-  if (cancelSaveButton) {
-    cancelSaveButton.addEventListener('click', () => {
-      toggleSaveModal(false);
-    });
-  }
-
-  const confirmSaveButton = document.getElementById('confirm-save');
-  if (confirmSaveButton) {
-    confirmSaveButton.addEventListener('click', () => {
       handleSaveDistribution();
     });
   }
@@ -1762,7 +1755,6 @@ function initMemberControls() {
   const backdrop = document.getElementById('modal-backdrop');
   if (backdrop) {
     backdrop.addEventListener('click', () => {
-      toggleSaveModal(false);
       closeMemberModal();
       closeExpenseModal();
     });
