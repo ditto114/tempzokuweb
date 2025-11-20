@@ -395,7 +395,7 @@ button:disabled {
   background-color: var(--card-bg);
   border-radius: 12px;
   padding: 24px;
-  width: min(90vw, 420px);
+  width: min(90vw, 520px);
   max-height: 90vh;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
   display: flex;
@@ -403,10 +403,60 @@ button:disabled {
   gap: 16px;
 }
 
+.channel-modal-content {
+  gap: 12px;
+}
+
+
+.channel-list-wrapper {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.channel-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.channel-list-item {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.channel-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.channel-empty {
+  margin: 0;
+  color: #6b7280;
+  text-align: center;
+}
+
 .channel-modal-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
 }
 
 .channel-modal-label {
@@ -414,7 +464,7 @@ button:disabled {
   color: var(--text-primary, #1f2933);
 }
 
-#channel-code-input {
+.channel-modal-form input[type='text'] {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border, #e5e7eb);

@@ -17,18 +17,28 @@
 
   <div class="modal-backdrop hidden" id="channel-modal-backdrop"></div>
   <div class="modal channel-modal hidden" id="channel-modal" role="dialog" aria-modal="true" aria-labelledby="channel-modal-title">
-    <div class="modal-content">
+    <div class="modal-content channel-modal-content">
       <header class="modal-header">
-        <h2 id="channel-modal-title">채널 코드 입력</h2>
+        <h2 id="channel-modal-title">혼테일 타이머 채널</h2>
+        <button type="button" class="secondary" id="channel-register-button">채널 등록</button>
       </header>
-      <form id="channel-modal-form" class="channel-modal-form">
-        <label for="channel-code-input" class="channel-modal-label">접속할 채널 코드를 입력하세요.</label>
-        <input id="channel-code-input" type="text" name="channelCode" autocomplete="one-time-code" maxlength="20" placeholder="예: ca01" required />
-        <p class="channel-modal-hint">기존 타이머는 기본 채널 코드 <strong>ca01</strong>에서 확인할 수 있어요.</p>
+
+      <div class="channel-list-wrapper">
+        <p class="channel-empty" id="channel-empty">표시할 채널이 없습니다</p>
+        <ul class="channel-list" id="channel-list" aria-live="polite"></ul>
+      </div>
+
+      <form id="channel-register-form" class="channel-modal-form hidden" novalidate>
+        <label for="channel-code-input" class="channel-modal-label">채널 코드를 입력하세요.</label>
+        <input id="channel-code-input" type="text" name="channelCode" autocomplete="one-time-code" maxlength="20" placeholder="채널 코드를 입력하세요" />
+
+        <label for="channel-name-input" class="channel-modal-label">채널 이름 (선택)</label>
+        <input id="channel-name-input" type="text" name="channelName" maxlength="30" placeholder="채널을 구분할 이름을 입력하세요" />
+
         <p class="channel-modal-error hidden" id="channel-modal-error" role="alert"></p>
         <div class="modal-actions">
-          <button type="button" class="secondary" id="channel-modal-cancel">취소</button>
-          <button type="submit" class="primary">접속</button>
+          <button type="button" class="secondary" id="channel-register-cancel">취소</button>
+          <button type="submit" class="primary">등록</button>
         </div>
       </form>
     </div>
