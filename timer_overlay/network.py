@@ -131,6 +131,7 @@ class TimerService(QObject):
         self._settings = settings
         self._stream_session: Optional[requests.Session] = None
         self._actions_session = requests.Session()
+        self._channel_code: Optional[str] = None
         self._running = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -138,6 +139,9 @@ class TimerService(QObject):
         """스트림 수신을 시작한다."""
 
         if self._running.is_set():
+            return
+        if not self._channel_code:
+            self.connection_state_changed.emit(False, "채널 코드가 설정되지 않았습니다.")
             return
         self._running.set()
         if not self._thread.is_alive():
@@ -171,6 +175,28 @@ class TimerService(QObject):
         if was_running:
             self.start()
 
+    def update_channel_code(self, channel_code: str) -> None:
+        """채널 코드를 갱신한다."""
+
+        normalized = (channel_code or "").strip()
+        if not normalized:
+            return
+
+        if normalized == self._channel_code:
+            return
+
+        was_running = self._running.is_set()
+        if was_running:
+            self.stop()
+        self._channel_code = normalized
+        if was_running:
+            self.start()
+
+    def _channel_params(self) -> dict:
+        if not self._channel_code:
+            return {}
+        return {"channelCode": self._channel_code}
+
     @property
     def is_running(self) -> bool:
         return self._running.is_set()
@@ -187,7 +213,12 @@ class TimerService(QObject):
     def _post_action(self, path: str, payload: Optional[Dict[str, Any]] = None) -> bool:
         url = f"{self._settings.base_url}{path}"
         try:
-            response = self._actions_session.post(url, json=payload or {}, timeout=5)
+            response = self._actions_session.post(
+                url,
+                json=payload or {},
+                params=self._channel_params(),
+                timeout=5,
+            )
             response.raise_for_status()
             return True
         except requests.RequestException as exc:
@@ -197,6 +228,10 @@ class TimerService(QObject):
     def _run(self) -> None:
         backoff = 2.0
         while self._running.is_set():
+            if not self._channel_code:
+                self.connection_state_changed.emit(False, "채널 코드가 설정되지 않았습니다.")
+                self._running.clear()
+                break
             self.connection_state_changed.emit(False, "서버에 연결하는 중입니다…")
             session = requests.Session()
             self._stream_session = session
@@ -207,6 +242,19 @@ class TimerService(QObject):
                     self.timers_updated.emit(payload)
                 self._listen_stream(session)
                 backoff = 2.0
+            except requests.HTTPError as exc:
+                if not self._running.is_set():
+                    break
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 404:
+                    self.connection_state_changed.emit(False, "채널 코드를 확인해주세요.")
+                    self._running.clear()
+                    break
+                logger.warning("타이머 스트림 연결 실패: %s", exc)
+                message = "서버 연결이 끊어졌습니다. 잠시 후 다시 시도합니다."
+                self.connection_state_changed.emit(False, message)
+                time.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
             except requests.RequestException as exc:
                 if not self._running.is_set():
                     break
@@ -221,7 +269,7 @@ class TimerService(QObject):
 
     def _fetch_current_state(self, session: requests.Session) -> Optional[Dict[str, Any]]:
         url = f"{self._settings.base_url}/api/timers"
-        response = session.get(url, timeout=5)
+        response = session.get(url, params=self._channel_params(), timeout=5)
         response.raise_for_status()
         try:
             return response.json()
@@ -231,7 +279,7 @@ class TimerService(QObject):
 
     def _listen_stream(self, session: requests.Session) -> None:
         url = f"{self._settings.base_url}/api/timers/stream"
-        with session.get(url, stream=True, timeout=(5, 60)) as response:
+        with session.get(url, stream=True, timeout=(5, 60), params=self._channel_params()) as response:
             response.raise_for_status()
             self.connection_state_changed.emit(True, "실시간 스트림에 연결되었습니다.")
             buffer = ""

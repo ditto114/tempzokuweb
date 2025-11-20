@@ -68,6 +68,40 @@ class ServerSettingsDialog(QDialog):
         return True
 
 
+class ChannelCodeDialog(QDialog):
+    """타이머 채널 코드를 받기 위한 다이얼로그."""
+
+    def __init__(self, parent: QWidget | None, default_code: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("채널 코드 확인")
+        self._input = QLineEdit(default_code or "ca01")
+        self._input.setMaxLength(20)
+        self._input.setPlaceholderText("예: ca01")
+
+        label = QLabel("접속할 채널 코드를 입력해주세요.")
+        label.setWordWrap(True)
+
+        form_layout = QVBoxLayout()
+        form_layout.addWidget(label)
+        form_layout.addWidget(self._input)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addLayout(form_layout)
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+
+    def prompt(self) -> str | None:
+        self._input.selectAll()
+        if self.exec_() != QDialog.Accepted:
+            return None
+        code = self._input.text().strip()
+        return code or None
+
+
 class HotkeyCaptureDialog(QDialog):
     """사용자로부터 단일 키 입력을 받기 위한 다이얼로그."""
 
@@ -236,15 +270,29 @@ class MainWindow(QMainWindow):
 
     def _apply_server_settings(self, *, initial: bool) -> None:
         settings = ServerSettings(self.config.server_host, self.config.server_port)
-        if self._test_connection(settings):
-            self._start_service(settings)
+        target_settings = settings if self._test_connection(settings) else self._handle_connection_failure(initial)
+        if target_settings is None:
             return
 
-        if not self._handle_connection_failure(initial):
+        channel_code = self._prompt_channel_code()
+        if not channel_code:
+            self.close()
             return
+        if not self._verify_channel_code(target_settings, channel_code):
+            QMessageBox.critical(
+                self,
+                "채널",
+                "입력한 채널 코드를 찾을 수 없습니다. 프로그램을 종료합니다.",
+            )
+            self.close()
+            return
+
+        self.config.channel_code = channel_code
+        self.store.save(self.config)
+        self._start_service(target_settings, channel_code)
 
     def _test_connection(self, settings: ServerSettings) -> bool:
-        url = f"{settings.base_url}/api/timers"
+        url = f"{settings.base_url}/api/health"
         try:
             response = requests.get(url, timeout=5)
             response.raise_for_status()
@@ -253,7 +301,7 @@ class MainWindow(QMainWindow):
             logger.warning("서버 연결 사전 점검 실패: %s", exc)
             return False
 
-    def _handle_connection_failure(self, initial: bool) -> bool:
+    def _handle_connection_failure(self, initial: bool) -> ServerSettings | None:
         message_box = QMessageBox(self)
         message_box.setIcon(QMessageBox.Warning)
         message_box.setWindowTitle("서버 연결 실패")
@@ -265,15 +313,14 @@ class MainWindow(QMainWindow):
         if message_box.clickedButton() is not retry_button:
             if initial:
                 self.close()
-            return False
+            return None
 
         fallback = ServerSettings("localhost", 47984)
         if self._test_connection(fallback):
             self.config.server_host = fallback.host
             self.config.server_port = fallback.port
             self.store.save(self.config)
-            self._start_service(fallback)
-            return True
+            return fallback
 
         QMessageBox.critical(
             self,
@@ -281,10 +328,31 @@ class MainWindow(QMainWindow):
             "localhost:47984 서버에 연결하지 못했습니다. 프로그램을 종료합니다.",
         )
         self.close()
-        return False
+        return None
 
-    def _start_service(self, settings: ServerSettings) -> None:
+    def _prompt_channel_code(self) -> str | None:
+        dialog = ChannelCodeDialog(self, getattr(self.config, "channel_code", "ca01"))
+        return dialog.prompt()
+
+    def _verify_channel_code(self, settings: ServerSettings, channel_code: str) -> bool:
+        url = f"{settings.base_url}/api/timers"
+        try:
+            response = requests.get(url, params={"channelCode": channel_code}, timeout=5)
+            response.raise_for_status()
+            return True
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 404:
+                return False
+            logger.warning("채널 검증 실패: %s", exc)
+            return False
+        except requests.RequestException as exc:
+            logger.warning("채널 검증 실패: %s", exc)
+            return False
+
+    def _start_service(self, settings: ServerSettings, channel_code: str) -> None:
         self.timer_service.update_settings(settings)
+        self.timer_service.update_channel_code(channel_code)
         if not self.timer_service.is_running:
             self.timer_service.start()
 

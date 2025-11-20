@@ -11,8 +11,29 @@
     <h1 class="landing-title">카스공대</h1>
     <div class="landing-actions">
       <a href="/distribution.html" class="landing-link">혼테일 분배표</a>
-      <a href="/timers.html" class="landing-link">혼테일 타이머</a>
+      <button type="button" id="open-timer-channel" class="landing-link">혼테일 타이머</button>
     </div>
   </main>
+
+  <div class="modal-backdrop hidden" id="channel-modal-backdrop"></div>
+  <div class="modal channel-modal hidden" id="channel-modal" role="dialog" aria-modal="true" aria-labelledby="channel-modal-title">
+    <div class="modal-content">
+      <header class="modal-header">
+        <h2 id="channel-modal-title">채널 코드 입력</h2>
+      </header>
+      <form id="channel-modal-form" class="channel-modal-form">
+        <label for="channel-code-input" class="channel-modal-label">접속할 채널 코드를 입력하세요.</label>
+        <input id="channel-code-input" type="text" name="channelCode" autocomplete="one-time-code" maxlength="20" placeholder="예: ca01" required />
+        <p class="channel-modal-hint">기존 타이머는 기본 채널 코드 <strong>ca01</strong>에서 확인할 수 있어요.</p>
+        <p class="channel-modal-error hidden" id="channel-modal-error" role="alert"></p>
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="channel-modal-cancel">취소</button>
+          <button type="submit" class="primary">접속</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="index.js"></script>
 </body>
 </html>
