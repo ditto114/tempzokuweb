@@ -11,6 +11,9 @@ const gridColumnsInput = document.getElementById('timer-grid-columns');
 const gridRowsInput = document.getElementById('timer-grid-rows');
 const shortcutButton = document.getElementById('timer-shortcut-button');
 const toggleViewModeButton = document.getElementById('toggle-view-mode');
+const urlParams = new URLSearchParams(window.location.search);
+const channelCode = (urlParams.get('channelCode') || '').trim();
+const channelLabelElement = document.getElementById('channel-code-label');
 
 const timers = new Map();
 const timerDisplays = new Map();
@@ -59,6 +62,25 @@ function clampTimerDuration(value) {
     return DEFAULT_TIMER_DURATION_MS;
   }
   return Math.min(Math.max(value, MIN_TIMER_DURATION_MS), MAX_TIMER_DURATION_MS);
+}
+
+function buildChannelUrl(path) {
+  if (!channelCode) {
+    throw new Error('채널 코드가 설정되지 않았습니다.');
+  }
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}channelCode=${encodeURIComponent(channelCode)}`;
+}
+
+function updateChannelLabel() {
+  if (!channelLabelElement) {
+    return;
+  }
+  if (!channelCode) {
+    channelLabelElement.textContent = '채널 코드 입력 후 이용해주세요.';
+    return;
+  }
+  channelLabelElement.textContent = `채널 코드: ${channelCode}`;
 }
 
 function normalizeShortcutValue(value) {
@@ -689,8 +711,12 @@ function setGridSettings(nextSettings, { shouldRender = true, syncInputs = true 
 }
 
 async function persistGridSettings(settings) {
+  if (!channelCode) {
+    updateStatus('채널 코드가 필요합니다.', true);
+    return;
+  }
   try {
-    const response = await fetch('/api/timers/grid-settings', {
+    const response = await fetch(buildChannelUrl('/api/timers/grid-settings'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -1653,8 +1679,12 @@ function updateTimerDisplays() {
 }
 
 async function fetchTimers() {
+  if (!channelCode) {
+    updateStatus('채널 코드가 필요합니다.', true);
+    return;
+  }
   try {
-    const response = await fetch('/api/timers');
+    const response = await fetch(buildChannelUrl('/api/timers'));
     if (!response.ok) {
       throw new Error('타이머 정보를 불러올 수 없습니다.');
     }
@@ -1676,8 +1706,13 @@ async function requestJson(url, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   };
+  if (!channelCode) {
+    updateStatus('채널 코드가 필요합니다.', true);
+    throw new Error('Missing channel code');
+  }
+  const targetUrl = buildChannelUrl(url);
   try {
-    const response = await fetch(url, config);
+    const response = await fetch(targetUrl, config);
     if (!response.ok) {
       const message = '요청을 처리하지 못했습니다.';
       throw new Error(message);
@@ -1985,11 +2020,15 @@ function handleDragEnd(event) {
 }
 
 function connectStream() {
+  if (!channelCode) {
+    updateStatus('채널 코드가 필요합니다.', true);
+    return;
+  }
   if (eventSource) {
     eventSource.close();
   }
 
-  eventSource = new EventSource('/api/timers/stream');
+  eventSource = new EventSource(buildChannelUrl('/api/timers/stream'));
 
   eventSource.onopen = () => {
     updateStatus('실시간으로 연결되었습니다.');
@@ -2063,5 +2102,14 @@ window.setInterval(() => {
   updateTimerDisplays();
 }, 250);
 
-fetchTimers();
-connectStream();
+updateChannelLabel();
+
+if (!channelCode) {
+  updateStatus('채널 코드가 필요합니다. 메인 화면으로 이동합니다.', true);
+  setTimeout(() => {
+    window.location.replace('/');
+  }, 1200);
+} else {
+  fetchTimers();
+  connectStream();
+}

@@ -25,13 +25,77 @@ const DEFAULT_TIMER_DURATION_MS = 15 * 60 * 1000;
 const MIN_TIMER_DURATION_MS = 5 * 1000;
 const MAX_TIMER_DURATION_MS = 3 * 60 * 60 * 1000;
 
-const timerClients = new Set();
-const timers = new Map();
+const DEFAULT_CHANNEL_CODE = 'ca01';
+const CHANNEL_CODE_MAX_LENGTH = 20;
+const knownChannels = new Set([DEFAULT_CHANNEL_CODE]);
+const timerClientsByChannel = new Map();
+const timersByChannel = new Map([[DEFAULT_CHANNEL_CODE, new Map()]]);
 
 const DEFAULT_GRID_SETTINGS = Object.freeze({ columns: 3, rows: 2 });
 const GRID_SETTINGS_RANGE = Object.freeze({ min: 1, max: 6 });
-let timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+const gridSettingsByChannel = new Map([
+  [DEFAULT_CHANNEL_CODE, { ...DEFAULT_GRID_SETTINGS }],
+]);
 const LOGIN_PAGE_PATH = '/login.html';
+
+function normalizeChannelCode(raw) {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.slice(0, CHANNEL_CODE_MAX_LENGTH);
+}
+
+function registerChannel(rawChannelCode) {
+  const channelCode = normalizeChannelCode(rawChannelCode) || DEFAULT_CHANNEL_CODE;
+  knownChannels.add(channelCode);
+  if (!timersByChannel.has(channelCode)) {
+    timersByChannel.set(channelCode, new Map());
+  }
+  if (!gridSettingsByChannel.has(channelCode)) {
+    gridSettingsByChannel.set(channelCode, { ...DEFAULT_GRID_SETTINGS });
+  }
+  return channelCode;
+}
+
+function isChannelAvailable(channelCode) {
+  return knownChannels.has(channelCode);
+}
+
+function getChannelTimers(channelCode, { createIfMissing = false } = {}) {
+  if (!channelCode) {
+    return null;
+  }
+  const existing = timersByChannel.get(channelCode);
+  if (existing) {
+    return existing;
+  }
+  if (!createIfMissing) {
+    return null;
+  }
+  const created = new Map();
+  timersByChannel.set(channelCode, created);
+  return created;
+}
+
+function getChannelClients(channelCode) {
+  let clients = timerClientsByChannel.get(channelCode);
+  if (!clients) {
+    clients = new Set();
+    timerClientsByChannel.set(channelCode, clients);
+  }
+  return clients;
+}
+
+function getGridSettings(channelCode) {
+  if (!channelCode || !gridSettingsByChannel.has(channelCode)) {
+    return { ...DEFAULT_GRID_SETTINGS };
+  }
+  return normalizeGridSettings(gridSettingsByChannel.get(channelCode));
+}
 
 function hashPassword(password) {
   return crypto.createHash('sha256').update(String(password ?? '')).digest('hex');
@@ -107,6 +171,20 @@ function requireApiAuth(req, res, next) {
   return next();
 }
 
+function requireChannel(req, res, next) {
+  const rawChannelCode = req.query?.channelCode ?? req.body?.channelCode;
+  const channelCode = normalizeChannelCode(rawChannelCode);
+  if (!channelCode) {
+    return res.status(400).json({ message: '채널 코드를 입력해주세요.' });
+  }
+  if (!isChannelAvailable(channelCode)) {
+    return res.status(404).json({ message: '존재하지 않는 채널 코드입니다.' });
+  }
+  registerChannel(channelCode);
+  req.channelCode = channelCode;
+  return next();
+}
+
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
     return DEFAULT_TIMER_DURATION_MS;
@@ -163,9 +241,16 @@ function normalizeGridSettings(raw = {}) {
   return { columns, rows };
 }
 
-function getTimersPayload(now = Date.now()) {
+function getTimersPayload(channelCode, now = Date.now()) {
+  if (!isChannelAvailable(channelCode)) {
+    return null;
+  }
+  const channelTimers = getChannelTimers(channelCode);
+  if (!channelTimers) {
+    return null;
+  }
   return {
-    timers: Array.from(timers.values())
+    timers: Array.from(channelTimers.values())
       .sort((a, b) => {
         const orderA = Number.isFinite(a.displayOrder) ? a.displayOrder : a.id;
         const orderB = Number.isFinite(b.displayOrder) ? b.displayOrder : b.id;
@@ -175,28 +260,41 @@ function getTimersPayload(now = Date.now()) {
         return a.id - b.id;
       })
       .map((timer) => createTimerPayload(timer, now)),
-    gridSettings: normalizeGridSettings(timerGridSettings),
+    gridSettings: getGridSettings(channelCode),
   };
 }
 
-function broadcastTimers(payload = getTimersPayload()) {
+function broadcastTimers(channelCode, payload = getTimersPayload(channelCode)) {
+  if (!payload) {
+    return;
+  }
   const data = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const client of timerClients) {
+  const clients = timerClientsByChannel.get(channelCode);
+  if (!clients) {
+    return;
+  }
+  for (const client of clients) {
     try {
       client.write(data);
     } catch (error) {
-      timerClients.delete(client);
+      clients.delete(client);
     }
   }
 }
 
-function sendTimersState(response, payload = getTimersPayload()) {
+function sendTimersState(response, channelCode, payload = getTimersPayload(channelCode)) {
+  if (!payload) {
+    return;
+  }
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function generateTimerName() {
-  const existingNames = new Set(Array.from(timers.values(), (timer) => timer.name));
-  let index = timers.size + 1;
+function generateTimerName(channelCode = DEFAULT_CHANNEL_CODE) {
+  const timersInChannel = getChannelTimers(channelCode, { createIfMissing: true });
+  const existingNames = new Set(
+    Array.from(timersInChannel.values(), (timer) => timer.name),
+  );
+  let index = timersInChannel.size + 1;
   while (existingNames.has(`타이머 ${index}`)) {
     index += 1;
   }
@@ -210,7 +308,7 @@ async function persistTimer(timer) {
   const remainingMs = Math.max(0, Math.floor(timer.remainingMs ?? 0));
   const endTime = typeof timer.endTime === 'number' ? Math.floor(timer.endTime) : null;
   await pool.query(
-    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, swipe_to_reset = ?, end_time = ?, display_order = ? WHERE id = ?`,
+    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, swipe_to_reset = ?, end_time = ?, display_order = ? WHERE id = ? AND channel_code = ?`,
     [
       timer.name,
       Math.floor(timer.durationMs),
@@ -221,24 +319,28 @@ async function persistTimer(timer) {
       endTime,
       timer.displayOrder ?? 0,
       timer.id,
+      timer.channelCode,
     ],
   );
 }
 
-async function createTimerInDatabase({ name, durationMs }) {
+async function createTimerInDatabase({ name, durationMs, channelCode }) {
   if (!pool) {
     throw new Error('Database connection is not initialized.');
   }
-  const [rows] = await pool.query('SELECT COALESCE(MAX(display_order), -1) AS maxOrder FROM timers');
+  const [rows] = await pool.query(
+    'SELECT COALESCE(MAX(display_order), -1) AS maxOrder FROM timers WHERE channel_code = ?',
+    [channelCode],
+  );
   const nextOrder = Number(rows?.[0]?.maxOrder ?? -1) + 1;
   const [result] = await pool.query(
-    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order) VALUES (?, ?, ?, 0, 0, 0, NULL, ?)`,
-    [name, Math.floor(durationMs), Math.floor(durationMs), nextOrder],
+    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order, channel_code) VALUES (?, ?, ?, 0, 0, 0, NULL, ?, ?)`,
+    [name, Math.floor(durationMs), Math.floor(durationMs), nextOrder, channelCode],
   );
   return { id: result.insertId, displayOrder: nextOrder };
 }
 
-async function deleteTimerFromDatabase(id) {
+async function deleteTimerFromDatabase(id, channelCode) {
   if (!pool) {
     throw new Error('Database connection is not initialized.');
   }
@@ -246,14 +348,17 @@ async function deleteTimerFromDatabase(id) {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [rows] = await connection.query('SELECT display_order FROM timers WHERE id = ?', [id]);
+    const [rows] = await connection.query(
+      'SELECT display_order FROM timers WHERE id = ? AND channel_code = ?',
+      [id, channelCode],
+    );
     if (!Array.isArray(rows) || rows.length === 0) {
       await connection.rollback();
       return null;
     }
 
     const displayOrder = Number(rows[0].display_order ?? 0);
-    await connection.query('DELETE FROM timers WHERE id = ?', [id]);
+    await connection.query('DELETE FROM timers WHERE id = ? AND channel_code = ?', [id, channelCode]);
     await connection.commit();
     return displayOrder;
   } catch (error) {
@@ -274,14 +379,22 @@ async function loadTimersFromDatabase() {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order FROM timers ORDER BY display_order ASC, id ASC`,
+    `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order, channel_code FROM timers ORDER BY channel_code ASC, display_order ASC, id ASC`,
   );
 
   const now = Date.now();
-  timers.clear();
+  if (knownChannels.size === 0) {
+    registerChannel(DEFAULT_CHANNEL_CODE);
+  }
+  timersByChannel.clear();
+  for (const channelCode of knownChannels) {
+    timersByChannel.set(channelCode, new Map());
+  }
   const updates = [];
 
   for (const row of rows) {
+    const rawChannelCode = row.channel_code || DEFAULT_CHANNEL_CODE;
+    const channelCode = registerChannel(rawChannelCode);
     const duration = clampTimerDuration(Number(row.duration_ms));
     const endTime = row.end_time != null ? Number(row.end_time) : null;
     const timer = {
@@ -294,6 +407,7 @@ async function loadTimersFromDatabase() {
       swipeToReset: Boolean(row.swipe_to_reset),
       displayOrder: Number.isFinite(row.display_order) ? Number(row.display_order) : row.id,
       endTime: typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null,
+      channelCode,
       updatedAt: now,
     };
 
@@ -318,14 +432,20 @@ async function loadTimersFromDatabase() {
       timer.endTime = null;
     }
 
-    timers.set(timer.id, timer);
+    const channelTimers = getChannelTimers(channelCode, { createIfMissing: true });
+    channelTimers.set(timer.id, timer);
   }
 
-  if (timers.size === 0) {
-    const name = generateTimerName();
+  const defaultChannelTimers = getChannelTimers(DEFAULT_CHANNEL_CODE, { createIfMissing: true });
+  if (defaultChannelTimers.size === 0) {
+    const name = generateTimerName(DEFAULT_CHANNEL_CODE);
     const duration = DEFAULT_TIMER_DURATION_MS;
-    const { id: insertId, displayOrder } = await createTimerInDatabase({ name, durationMs: duration });
-    timers.set(insertId, {
+    const { id: insertId, displayOrder } = await createTimerInDatabase({
+      name,
+      durationMs: duration,
+      channelCode: DEFAULT_CHANNEL_CODE,
+    });
+    defaultChannelTimers.set(insertId, {
       id: insertId,
       name,
       durationMs: duration,
@@ -335,6 +455,7 @@ async function loadTimersFromDatabase() {
       swipeToReset: false,
       displayOrder,
       endTime: null,
+      channelCode: DEFAULT_CHANNEL_CODE,
       updatedAt: now,
     });
   }
@@ -342,6 +463,55 @@ async function loadTimersFromDatabase() {
   if (updates.length > 0) {
     await Promise.allSettled(updates);
   }
+}
+
+async function loadGridSettingsFromDatabase() {
+  if (!pool) {
+    return;
+  }
+
+  knownChannels.clear();
+  registerChannel(DEFAULT_CHANNEL_CODE);
+  gridSettingsByChannel.clear();
+  const [rows] = await pool.query(
+    'SELECT channel_code, value FROM timer_settings WHERE name = ?',
+    ['grid'],
+  );
+  let hasDefaultChannelSettings = false;
+
+  for (const row of rows) {
+    const channelCode = registerChannel(row.channel_code || DEFAULT_CHANNEL_CODE);
+    let parsedValue = row.value;
+    if (typeof parsedValue === 'string') {
+      try {
+        parsedValue = JSON.parse(parsedValue);
+      } catch (error) {
+        parsedValue = DEFAULT_GRID_SETTINGS;
+      }
+    }
+    gridSettingsByChannel.set(channelCode, normalizeGridSettings(parsedValue));
+    if (channelCode === DEFAULT_CHANNEL_CODE) {
+      hasDefaultChannelSettings = true;
+    }
+  }
+
+  if (!hasDefaultChannelSettings) {
+    gridSettingsByChannel.set(DEFAULT_CHANNEL_CODE, { ...DEFAULT_GRID_SETTINGS });
+    try {
+      await pool.query(
+        'INSERT INTO timer_settings (channel_code, name, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        [DEFAULT_CHANNEL_CODE, 'grid', JSON.stringify(DEFAULT_GRID_SETTINGS)],
+      );
+    } catch (error) {
+      console.error('Failed to persist default grid settings:', error);
+    }
+  }
+
+  knownChannels.forEach((channelCode) => {
+    if (!gridSettingsByChannel.has(channelCode)) {
+      gridSettingsByChannel.set(channelCode, { ...DEFAULT_GRID_SETTINGS });
+    }
+  });
 }
 
 async function initializeDatabase() {
@@ -396,6 +566,7 @@ async function initializeDatabase() {
   await connection.query(`
     CREATE TABLE IF NOT EXISTS timers (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}',
       name VARCHAR(255) NOT NULL,
       duration_ms INT NOT NULL,
       remaining_ms INT NOT NULL,
@@ -410,9 +581,11 @@ async function initializeDatabase() {
   `);
   await connection.query(`
     CREATE TABLE IF NOT EXISTS timer_settings (
-      name VARCHAR(100) PRIMARY KEY,
+      channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}',
+      name VARCHAR(100) NOT NULL,
       value JSON NOT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (channel_code, name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
   const [displayOrderColumn] = await connection.query(
@@ -433,32 +606,41 @@ async function initializeDatabase() {
     );
   }
 
-  try {
-    const [settingsRows] = await connection.query(
-      'SELECT value FROM timer_settings WHERE name = ? LIMIT 1',
-      ['grid'],
+  const [timerChannelColumn] = await connection.query(
+    "SHOW COLUMNS FROM timers LIKE 'channel_code'",
+  );
+  if (timerChannelColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE timers ADD COLUMN channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}' AFTER id`,
     );
-    if (Array.isArray(settingsRows) && settingsRows.length > 0) {
-      const storedValue = settingsRows[0].value;
-      let parsedValue = storedValue;
-      if (typeof storedValue === 'string') {
-        try {
-          parsedValue = JSON.parse(storedValue);
-        } catch (parseError) {
-          parsedValue = DEFAULT_GRID_SETTINGS;
-        }
-      }
-      timerGridSettings = normalizeGridSettings(parsedValue);
-    } else {
-      timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
-      await connection.query(
-        'INSERT INTO timer_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-        ['grid', JSON.stringify(timerGridSettings)],
-      );
-    }
-  } catch (error) {
-    console.error('Failed to load timer grid settings:', error);
-    timerGridSettings = { ...DEFAULT_GRID_SETTINGS };
+  }
+  await connection.query(
+    'UPDATE timers SET channel_code = ? WHERE channel_code IS NULL OR channel_code = ?',
+    [DEFAULT_CHANNEL_CODE, ''],
+  );
+
+  const [settingsChannelColumn] = await connection.query(
+    "SHOW COLUMNS FROM timer_settings LIKE 'channel_code'",
+  );
+  if (settingsChannelColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE timer_settings ADD COLUMN channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}' FIRST`,
+    );
+  }
+  await connection.query(
+    'UPDATE timer_settings SET channel_code = ? WHERE channel_code IS NULL OR channel_code = ?',
+    [DEFAULT_CHANNEL_CODE, ''],
+  );
+
+  const [timerSettingsPrimaryKey] = await connection.query(
+    "SHOW INDEX FROM timer_settings WHERE Key_name = 'PRIMARY'",
+  );
+  const primaryColumns = new Set(timerSettingsPrimaryKey.map((row) => row.Column_name));
+  const hasChannelPrimaryKey =
+    primaryColumns.has('channel_code') && primaryColumns.has('name') && primaryColumns.size === 2;
+  if (!hasChannelPrimaryKey && timerSettingsPrimaryKey.length > 0) {
+    await connection.query('ALTER TABLE timer_settings DROP PRIMARY KEY');
+    await connection.query('ALTER TABLE timer_settings ADD PRIMARY KEY (channel_code, name)');
   }
   await connection.end();
 
@@ -470,10 +652,15 @@ async function initializeDatabase() {
     queueLimit: 0,
   });
 
+  await loadGridSettingsFromDatabase();
   await loadTimersFromDatabase();
 }
 
 app.use(express.json());
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
 
 app.get(['/login', '/login.html'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
@@ -820,19 +1007,28 @@ app.delete('/api/distributions/:id', requireApiAuth, async (req, res) => {
   }
 });
 
-function getTimerById(id) {
+function getTimerById(channelCode, id) {
   const numericId = Number(id);
   if (!Number.isInteger(numericId)) {
     return null;
   }
-  return timers.get(numericId) ?? null;
+  const channelTimers = getChannelTimers(channelCode);
+  if (!channelTimers) {
+    return null;
+  }
+  return channelTimers.get(numericId) ?? null;
 }
 
-app.get('/api/timers', (req, res) => {
-  res.json(getTimersPayload());
+app.get('/api/timers', requireChannel, (req, res) => {
+  const payload = getTimersPayload(req.channelCode);
+  if (!payload) {
+    return res.status(404).json({ message: '해당 채널의 타이머를 찾을 수 없습니다.' });
+  }
+  return res.json(payload);
 });
 
-app.get('/api/timers/stream', (req, res) => {
+app.get('/api/timers/stream', requireChannel, (req, res) => {
+  const { channelCode } = req;
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -844,20 +1040,26 @@ app.get('/api/timers/stream', (req, res) => {
     res.writeHead(200);
   }
 
-  timerClients.add(res);
+  const clients = getChannelClients(channelCode);
+  clients.add(res);
   res.write('retry: 5000\n\n');
-  sendTimersState(res);
+  sendTimersState(res, channelCode);
 
   req.on('close', () => {
-    timerClients.delete(res);
+    clients.delete(res);
   });
 });
 
-app.post('/api/timers', async (req, res) => {
+app.post('/api/timers', requireChannel, async (req, res) => {
+  const { channelCode } = req;
   try {
-    const name = generateTimerName();
+    const name = generateTimerName(channelCode);
     const duration = DEFAULT_TIMER_DURATION_MS;
-    const { id: insertId, displayOrder } = await createTimerInDatabase({ name, durationMs: duration });
+    const { id: insertId, displayOrder } = await createTimerInDatabase({
+      name,
+      durationMs: duration,
+      channelCode,
+    });
     const now = Date.now();
     const timer = {
       id: insertId,
@@ -869,11 +1071,13 @@ app.post('/api/timers', async (req, res) => {
       swipeToReset: false,
       displayOrder,
       endTime: null,
+      channelCode,
       updatedAt: now,
     };
-    timers.set(insertId, timer);
+    const channelTimers = getChannelTimers(channelCode, { createIfMissing: true });
+    channelTimers.set(insertId, timer);
     const payload = createTimerPayload(timer, now);
-    broadcastTimers(getTimersPayload(now));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
     res.status(201).json(payload);
   } catch (error) {
     console.error('Error creating timer:', error);
@@ -881,8 +1085,9 @@ app.post('/api/timers', async (req, res) => {
   }
 });
 
-app.put('/api/timers/:id', async (req, res) => {
-  const timer = getTimerById(req.params.id);
+app.put('/api/timers/:id', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
@@ -911,7 +1116,7 @@ app.put('/api/timers/:id', async (req, res) => {
   try {
     await persistTimer(timer);
     const payload = createTimerPayload(timer, now);
-    broadcastTimers(getTimersPayload(now));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
     res.json(payload);
   } catch (error) {
     console.error('Error updating timer:', error);
@@ -919,8 +1124,9 @@ app.put('/api/timers/:id', async (req, res) => {
   }
 });
 
-app.post('/api/timers/:id/start', async (req, res) => {
-  const timer = getTimerById(req.params.id);
+app.post('/api/timers/:id/start', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
@@ -947,7 +1153,7 @@ app.post('/api/timers/:id/start', async (req, res) => {
   try {
     await persistTimer(timer);
     const payload = createTimerPayload(timer, now);
-    broadcastTimers(getTimersPayload(now));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
     res.json(payload);
   } catch (error) {
     console.error('Error starting timer:', error);
@@ -955,8 +1161,9 @@ app.post('/api/timers/:id/start', async (req, res) => {
   }
 });
 
-app.post('/api/timers/:id/pause', async (req, res) => {
-  const timer = getTimerById(req.params.id);
+app.post('/api/timers/:id/pause', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
@@ -974,7 +1181,7 @@ app.post('/api/timers/:id/pause', async (req, res) => {
   try {
     await persistTimer(timer);
     const payload = createTimerPayload(timer, now);
-    broadcastTimers(getTimersPayload(now));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
     res.json(payload);
   } catch (error) {
     console.error('Error pausing timer:', error);
@@ -982,8 +1189,9 @@ app.post('/api/timers/:id/pause', async (req, res) => {
   }
 });
 
-app.post('/api/timers/:id/reset', async (req, res) => {
-  const timer = getTimerById(req.params.id);
+app.post('/api/timers/:id/reset', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
@@ -997,7 +1205,7 @@ app.post('/api/timers/:id/reset', async (req, res) => {
   try {
     await persistTimer(timer);
     const payload = createTimerPayload(timer, now);
-    broadcastTimers(getTimersPayload(now));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
     res.json(payload);
   } catch (error) {
     console.error('Error resetting timer:', error);
@@ -1005,8 +1213,9 @@ app.post('/api/timers/:id/reset', async (req, res) => {
   }
 });
 
-app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
-  const timer = getTimerById(req.params.id);
+app.post('/api/timers/:id/toggle-repeat', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
@@ -1017,7 +1226,7 @@ app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
   try {
     await persistTimer(timer);
     const payload = createTimerPayload(timer, timer.updatedAt);
-    broadcastTimers(getTimersPayload(timer.updatedAt));
+    broadcastTimers(channelCode, getTimersPayload(channelCode, timer.updatedAt));
     res.json(payload);
   } catch (error) {
     console.error('Error toggling repeat mode:', error);
@@ -1025,35 +1234,42 @@ app.post('/api/timers/:id/toggle-repeat', async (req, res) => {
   }
 });
 
-app.delete('/api/timers/:id', async (req, res) => {
-  const timerId = Number(req.params.id);
-  if (!Number.isInteger(timerId)) {
-    return res.status(400).json({ message: '잘못된 타이머 ID입니다.' });
-  }
-
-  const timer = getTimerById(timerId);
+app.delete('/api/timers/:id', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const timer = getTimerById(channelCode, req.params.id);
   if (!timer) {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
 
   try {
-    const removedOrder = await deleteTimerFromDatabase(timerId);
-    if (removedOrder == null) {
-      return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
+    const removedOrder = await deleteTimerFromDatabase(timer.id, channelCode);
+    const channelTimers = getChannelTimers(channelCode);
+    if (removedOrder != null && channelTimers) {
+      channelTimers.delete(timer.id);
+      channelTimers.forEach((other) => {
+        if (other.displayOrder > removedOrder) {
+          other.displayOrder -= 1;
+        }
+      });
+      const payload = getTimersPayload(channelCode);
+      broadcastTimers(channelCode, payload);
+      res.json(payload);
+      return;
     }
-
-    timers.delete(timerId);
-    const now = Date.now();
-    const payload = getTimersPayload(now);
-    broadcastTimers(payload);
-    res.json(payload);
+    res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   } catch (error) {
     console.error('Error deleting timer:', error);
     res.status(500).json({ message: '타이머를 삭제하는 중 오류가 발생했습니다.' });
   }
 });
 
-app.post('/api/timers/reorder', async (req, res) => {
+app.post('/api/timers/reorder', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const channelTimers = getChannelTimers(channelCode);
+  if (!channelTimers) {
+    return res.status(404).json({ message: '해당 채널의 타이머가 없습니다.' });
+  }
+
   const { order, slots } = req.body ?? {};
   let layout = [];
 
@@ -1080,7 +1296,7 @@ app.post('/api/timers/reorder', async (req, res) => {
       continue;
     }
     const id = Number(value);
-    if (!Number.isInteger(id) || !timers.has(id)) {
+    if (!Number.isInteger(id) || !channelTimers.has(id)) {
       return res.status(400).json({ message: '잘못된 타이머 순서입니다.' });
     }
     if (assignments.has(id)) {
@@ -1089,7 +1305,7 @@ app.post('/api/timers/reorder', async (req, res) => {
     assignments.set(id, index);
   }
 
-  for (const id of timers.keys()) {
+  for (const id of channelTimers.keys()) {
     if (!assignments.has(id)) {
       layout.push(id);
       assignments.set(id, layout.length - 1);
@@ -1100,7 +1316,10 @@ app.post('/api/timers/reorder', async (req, res) => {
   try {
     await connection.beginTransaction();
     for (const [id, position] of assignments.entries()) {
-      await connection.query('UPDATE timers SET display_order = ? WHERE id = ?', [position, id]);
+      await connection.query(
+        'UPDATE timers SET display_order = ? WHERE id = ? AND channel_code = ?',
+        [position, id, channelCode],
+      );
     }
     await connection.commit();
   } catch (error) {
@@ -1118,34 +1337,35 @@ app.post('/api/timers/reorder', async (req, res) => {
 
   const now = Date.now();
   assignments.forEach((position, id) => {
-    const timer = timers.get(id);
+    const timer = channelTimers.get(id);
     if (timer) {
       timer.displayOrder = position;
       timer.updatedAt = now;
     }
   });
 
-  const payload = getTimersPayload(now);
-  broadcastTimers(payload);
+  const payload = getTimersPayload(channelCode, now);
+  broadcastTimers(channelCode, payload);
   res.json(payload);
 });
 
-app.get('/api/timers/grid-settings', (req, res) => {
-  res.json({ gridSettings: normalizeGridSettings(timerGridSettings) });
+app.get('/api/timers/grid-settings', requireChannel, (req, res) => {
+  res.json({ gridSettings: getGridSettings(req.channelCode) });
 });
 
-app.post('/api/timers/grid-settings', async (req, res) => {
+app.post('/api/timers/grid-settings', requireChannel, async (req, res) => {
+  const { channelCode } = req;
+  const currentSettings = getGridSettings(channelCode);
   const nextSettings = normalizeGridSettings(req.body ?? {});
   const hasChanged =
-    nextSettings.columns !== timerGridSettings.columns ||
-    nextSettings.rows !== timerGridSettings.rows;
+    nextSettings.columns !== currentSettings.columns || nextSettings.rows !== currentSettings.rows;
 
-  timerGridSettings = nextSettings;
+  gridSettingsByChannel.set(channelCode, nextSettings);
 
   try {
     await pool.query(
-      'INSERT INTO timer_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-      ['grid', JSON.stringify(timerGridSettings)],
+      'INSERT INTO timer_settings (channel_code, name, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+      [channelCode, 'grid', JSON.stringify(nextSettings)],
     );
   } catch (error) {
     console.error('Failed to persist timer grid settings:', error);
@@ -1153,61 +1373,66 @@ app.post('/api/timers/grid-settings', async (req, res) => {
   }
 
   if (hasChanged) {
-    broadcastTimers(getTimersPayload());
+    broadcastTimers(channelCode, getTimersPayload(channelCode));
   }
 
-  res.json({ gridSettings: normalizeGridSettings(timerGridSettings) });
+  res.json({ gridSettings: getGridSettings(channelCode) });
 });
 
 setInterval(async () => {
-  if (timers.size === 0) {
-    return;
-  }
-
   const now = Date.now();
-  let hasChanged = false;
   const updateTasks = [];
+  const changedChannels = new Set();
 
-  for (const timer of timers.values()) {
-    if (!timer.isRunning || typeof timer.endTime !== 'number') {
-      continue;
+  timersByChannel.forEach((channelTimers, channelCode) => {
+    if (!channelTimers || channelTimers.size === 0) {
+      return;
     }
 
-    const remaining = timer.endTime - now;
-    if (remaining > 0) {
-      continue;
-    }
+    for (const timer of channelTimers.values()) {
+      if (!timer.isRunning || typeof timer.endTime !== 'number') {
+        continue;
+      }
 
-    if (timer.repeatEnabled) {
-      timer.remainingMs = timer.durationMs;
-      timer.endTime = now + timer.durationMs;
-      timer.updatedAt = now;
-      updateTasks.push(persistTimer(timer));
-    } else {
-      timer.isRunning = false;
-      timer.remainingMs = 0;
-      timer.endTime = null;
-      timer.updatedAt = now;
-      updateTasks.push(persistTimer(timer));
+      const remaining = timer.endTime - now;
+      if (remaining > 0) {
+        continue;
+      }
+
+      if (timer.repeatEnabled) {
+        timer.remainingMs = timer.durationMs;
+        timer.endTime = now + timer.durationMs;
+        timer.updatedAt = now;
+        updateTasks.push(persistTimer(timer));
+      } else {
+        timer.isRunning = false;
+        timer.remainingMs = 0;
+        timer.endTime = null;
+        timer.updatedAt = now;
+        updateTasks.push(persistTimer(timer));
+      }
+      changedChannels.add(channelCode);
     }
-    hasChanged = true;
+  });
+
+  if (updateTasks.length > 0) {
+    await Promise.allSettled(updateTasks);
   }
 
-  if (hasChanged) {
-    if (updateTasks.length > 0) {
-      await Promise.allSettled(updateTasks);
-    }
-    broadcastTimers(getTimersPayload(now));
-  }
+  changedChannels.forEach((channelCode) => {
+    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
+  });
 }, 250);
 
 setInterval(() => {
   const keepAliveMessage = ':keep-alive\n\n';
-  for (const client of timerClients) {
-    try {
-      client.write(keepAliveMessage);
-    } catch (error) {
-      timerClients.delete(client);
+  for (const clients of timerClientsByChannel.values()) {
+    for (const client of clients) {
+      try {
+        client.write(keepAliveMessage);
+      } catch (error) {
+        clients.delete(client);
+      }
     }
   }
 }, 20000);

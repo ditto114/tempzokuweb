@@ -101,6 +101,7 @@ class AppConfig:
 
     server_host: str = "218.234.230.188"
     server_port: int = 47984
+    channel_code: str = "ca01"
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     timer_hotkeys: Dict[str, str] = field(default_factory=dict)
     overlay_opacity: int = 85
@@ -144,12 +145,14 @@ class AppConfig:
             overlay_opacity=int(data.get("overlay_opacity", 85)),
             timer_hotkeys=hotkeys,
             overlay_scale=int(data.get("overlay_scale", 1)),
+            channel_code=str(data.get("channel_code", "ca01")).strip() or "ca01",
         )
 
     def to_dict(self) -> Dict:
         return {
             "server_host": self.server_host,
             "server_port": self.server_port,
+            "channel_code": self.channel_code,
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
             "overlay_opacity": int(self.overlay_opacity),
             "timer_hotkeys": dict(self.timer_hotkeys),
