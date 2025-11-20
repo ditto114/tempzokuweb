@@ -6,8 +6,8 @@ import time
 from typing import Dict
 
 import requests
-from PyQt5.QtCore import QEvent, QTimer, Qt
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtCore import QEvent, QTimer, Qt, QPoint
+from PyQt5.QtGui import QColor, QGuiApplication, QKeySequence
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
         self.store = store
         self.config = store.load()
         self._server_clock_offset_ms = 0
+        self._connected = False
 
         self.status_label = QLabel("서버에 연결되지 않았습니다.")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -194,6 +195,11 @@ class MainWindow(QMainWindow):
         self.disconnect_button.setEnabled(False)
         self.disconnect_button.clicked.connect(self._handle_disconnect_clicked)
 
+        self.healthbar_button = QPushButton("체력바")
+        self.healthbar_button.setEnabled(False)
+        self.healthbar_button.clicked.connect(self._handle_healthbar_clicked)
+        self._healthbar_capture_active = False
+
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.status_label)
         header_layout.addStretch(1)
@@ -203,6 +209,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.scale_label)
         header_layout.addWidget(self.scale_slider)
         header_layout.addStretch(1)
+        header_layout.addWidget(self.healthbar_button)
         header_layout.addWidget(self.disconnect_button)
 
         self.table = QTableWidget(0, 4)
@@ -321,6 +328,14 @@ class MainWindow(QMainWindow):
         self.status_label.setText("채널 연결이 해제되었습니다.")
         self.status_label.setStyleSheet("color: #ff9800;")
         self._apply_server_settings(initial=False, force_prompt=True)
+
+    def _handle_healthbar_clicked(self) -> None:
+        if self._healthbar_capture_active:
+            return
+        self._healthbar_capture_active = True
+        self.healthbar_button.setEnabled(False)
+        self.setCursor(Qt.CrossCursor)
+        self.grabMouse()
 
     def _test_connection(self, settings: ServerSettings) -> bool:
         url = f"{settings.base_url}/api/health"
@@ -644,6 +659,7 @@ class MainWindow(QMainWindow):
 
     # 상태 업데이트 --------------------------------------------------------
     def _handle_connection_state(self, connected: bool, message: str) -> None:
+        self._connected = connected
         if message == "실시간 스트림에 연결되었습니다.":
             message = ""
         self.status_label.setText(message)
@@ -651,6 +667,9 @@ class MainWindow(QMainWindow):
             "color: #4caf50;" if connected else "color: #ff9800;"
         )
         self.disconnect_button.setEnabled(connected or bool(self.config.channel_code))
+        self.healthbar_button.setEnabled(connected and not self._healthbar_capture_active)
+        if not connected:
+            self._cancel_healthbar_capture()
 
     def _on_overlay_moved(self, timer_id: str, x: int, y: int) -> None:
         self.config.timer_positions[timer_id] = (x, y)
@@ -684,6 +703,17 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(source, event)
 
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if (
+            self._healthbar_capture_active
+            and event.button() == Qt.LeftButton
+            and isinstance(event.globalPos(), QPoint)
+        ):
+            position = event.globalPos()
+            self._complete_healthbar_capture(position)
+            return
+        return super().mousePressEvent(event)
+
     def _apply_row_style(self, row: int, timer_id: str) -> None:
         is_overlay_visible = timer_id in self.overlays
         color = QColor("#ccffcc") if is_overlay_visible else QColor(Qt.white)
@@ -691,6 +721,79 @@ class MainWindow(QMainWindow):
             item = self.table.item(row, column)
             if item is not None:
                 item.setBackground(color)
+
+    def _complete_healthbar_capture(self, position: QPoint) -> None:
+        try:
+            self.releaseMouse()
+            self.unsetCursor()
+            self._healthbar_capture_active = False
+            self._evaluate_healthbar(position)
+        finally:
+            self.healthbar_button.setEnabled(self._connected)
+
+    def _cancel_healthbar_capture(self) -> None:
+        if not self._healthbar_capture_active:
+            return
+        self._healthbar_capture_active = False
+        self.releaseMouse()
+        self.unsetCursor()
+        self.healthbar_button.setEnabled(self._connected)
+
+    def _evaluate_healthbar(self, position: QPoint) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            QMessageBox.warning(self, "체력바", "화면 정보를 가져올 수 없습니다.")
+            return
+
+        screenshot = screen.grabWindow(0)
+        image = screenshot.toImage()
+        device_ratio = screen.devicePixelRatio()
+        x = int(position.x() * device_ratio)
+        y = int(position.y() * device_ratio)
+
+        if x < 0 or y < 0 or x >= image.width() or y >= image.height():
+            QMessageBox.warning(self, "체력바", "선택한 위치가 화면 범위를 벗어났습니다.")
+            return
+
+        base_color = image.pixelColor(x, y)
+        a, _, right_edge = self._count_same_color(image, x, y, base_color)
+
+        next_x = right_edge + 1
+        if next_x >= image.width():
+            QMessageBox.warning(self, "체력바", "오른쪽에 더 이상 픽셀이 없습니다.")
+            return
+
+        next_color = image.pixelColor(next_x, y)
+        b = self._count_right(image, next_x, y, next_color)
+
+        c = a + b
+        if c == 0:
+            QMessageBox.warning(self, "체력바", "픽셀 정보를 계산할 수 없습니다.")
+            return
+
+        d = (a / c) * 100
+        QMessageBox.information(self, "체력바", f"{d:.1f}%")
+
+    def _count_same_color(self, image, x: int, y: int, target_color: QColor) -> tuple[int, int, int]:
+        width = image.width()
+        left = x
+        while left - 1 >= 0 and image.pixelColor(left - 1, y) == target_color:
+            left -= 1
+
+        right = x
+        while right + 1 < width and image.pixelColor(right + 1, y) == target_color:
+            right += 1
+
+        return right - left + 1, left, right
+
+    def _count_right(self, image, x: int, y: int, target_color: QColor) -> int:
+        width = image.width()
+        count = 0
+        position = x
+        while position < width and image.pixelColor(position, y) == target_color:
+            count += 1
+            position += 1
+        return count
 
     def _update_row_background(self, timer_id: str) -> None:
         row = self._row_index.get(timer_id)
