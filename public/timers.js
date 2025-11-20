@@ -2,6 +2,11 @@ const DEFAULT_TIMER_DURATION_MS = 15 * 60 * 1000;
 const MIN_TIMER_DURATION_MS = 5 * 1000;
 const MAX_TIMER_DURATION_MS = 3 * 60 * 60 * 1000;
 
+const CHANNEL_STORAGE_KEY = 'timer_channels';
+const KNOWN_CHANNEL_NAMES = Object.freeze({
+  ca01: 'CASS 텔공대',
+});
+
 const timerListElement = document.getElementById('timer-list');
 const statusElement = document.getElementById('timer-stream-status');
 const addTimerButton = document.getElementById('add-timer-button');
@@ -14,6 +19,41 @@ const toggleViewModeButton = document.getElementById('toggle-view-mode');
 const urlParams = new URLSearchParams(window.location.search);
 const channelCode = (urlParams.get('channelCode') || '').trim();
 const channelLabelElement = document.getElementById('channel-code-label');
+
+function loadStoredChannels() {
+  try {
+    const raw = localStorage.getItem(CHANNEL_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((item) => ({
+        code: typeof item.code === 'string' ? item.code.trim() : '',
+        name: typeof item.name === 'string' ? item.name.trim() : '',
+      }))
+      .filter((item) => item.code);
+  } catch (error) {
+    return [];
+  }
+}
+
+function resolveChannelName(code) {
+  if (!code) {
+    return '';
+  }
+  const normalized = code.trim().toLowerCase();
+  const stored = loadStoredChannels().find((item) => item.code.toLowerCase() === normalized);
+  if (stored?.name) {
+    return stored.name;
+  }
+  return KNOWN_CHANNEL_NAMES[normalized] || '';
+}
+
+const channelName = resolveChannelName(channelCode);
 
 const timers = new Map();
 const timerDisplays = new Map();
@@ -77,10 +117,14 @@ function updateChannelLabel() {
     return;
   }
   if (!channelCode) {
-    channelLabelElement.textContent = '채널 코드 입력 후 이용해주세요.';
+    channelLabelElement.textContent = '채널 정보 확인 후 이용해주세요.';
     return;
   }
-  channelLabelElement.textContent = `채널 코드: ${channelCode}`;
+  if (channelName) {
+    channelLabelElement.textContent = `채널: ${channelName}`;
+    return;
+  }
+  channelLabelElement.textContent = '채널에 접속 중입니다.';
 }
 
 function normalizeShortcutValue(value) {

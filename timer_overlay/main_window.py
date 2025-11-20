@@ -74,9 +74,9 @@ class ChannelCodeDialog(QDialog):
     def __init__(self, parent: QWidget | None, default_code: str) -> None:
         super().__init__(parent)
         self.setWindowTitle("채널 코드 확인")
-        self._input = QLineEdit(default_code or "ca01")
+        self._input = QLineEdit(default_code or "")
         self._input.setMaxLength(20)
-        self._input.setPlaceholderText("예: ca01")
+        self._input.setPlaceholderText("채널 코드를 입력하세요")
 
         label = QLabel("접속할 채널 코드를 입력해주세요.")
         label.setWordWrap(True)
@@ -190,9 +190,9 @@ class MainWindow(QMainWindow):
         self.scale_label = QLabel("오버레이 크기")
         self.scale_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        self.clock_label = QLabel("")
-        self.clock_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.clock_label.setStyleSheet("color: #bdbdbd;")
+        self.disconnect_button = QPushButton("접속 해제")
+        self.disconnect_button.setEnabled(False)
+        self.disconnect_button.clicked.connect(self._handle_disconnect_clicked)
 
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.status_label)
@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.scale_label)
         header_layout.addWidget(self.scale_slider)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.clock_label)
+        header_layout.addWidget(self.disconnect_button)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["이름", "남은 시간", "상태", "단축키"])
@@ -248,12 +248,6 @@ class MainWindow(QMainWindow):
         self._table_update_timer.timeout.connect(self._update_table_remaining)
         self._table_update_timer.start()
 
-        self._clock_timer = QTimer(self)
-        self._clock_timer.setInterval(1000)
-        self._clock_timer.timeout.connect(self._update_clock_label)
-        self._clock_timer.start()
-        self._update_clock_label()
-
         QTimer.singleShot(0, self._initialize_connection)
 
     # UI 핸들러 -------------------------------------------------------------
@@ -263,33 +257,70 @@ class MainWindow(QMainWindow):
             return
 
         self.store.save(self.config)
-        self._apply_server_settings(initial=False)
+        self._apply_server_settings(initial=False, force_prompt=False)
 
     def _initialize_connection(self) -> None:
-        self._apply_server_settings(initial=True)
+        self._apply_server_settings(initial=True, force_prompt=False)
 
-    def _apply_server_settings(self, *, initial: bool) -> None:
+    def _apply_server_settings(self, *, initial: bool, force_prompt: bool) -> None:
         settings = ServerSettings(self.config.server_host, self.config.server_port)
         target_settings = settings if self._test_connection(settings) else self._handle_connection_failure(initial)
         if target_settings is None:
             return
 
-        channel_code = self._prompt_channel_code()
-        if not channel_code:
-            self.close()
-            return
-        if not self._verify_channel_code(target_settings, channel_code):
-            QMessageBox.critical(
+        stored_code = "" if force_prompt else getattr(self.config, "channel_code", "").strip()
+        if stored_code:
+            if self._verify_channel_code(target_settings, stored_code):
+                self._connect_to_channel(target_settings, stored_code)
+                return
+            QMessageBox.warning(
                 self,
                 "채널",
-                "입력한 채널 코드를 찾을 수 없습니다. 프로그램을 종료합니다.",
+                "이전에 저장된 채널 코드가 더 이상 유효하지 않습니다. 다시 입력해주세요.",
             )
-            self.close()
+            self.config.channel_code = ""
+            self.store.save(self.config)
+
+        channel_code = self._prompt_valid_channel_code(target_settings, initial=initial)
+        if not channel_code:
             return
 
+        self._connect_to_channel(target_settings, channel_code)
+
+    def _prompt_valid_channel_code(self, settings: ServerSettings, *, initial: bool) -> str | None:
+        while True:
+            channel_code = self._prompt_channel_code()
+            if not channel_code:
+                if initial:
+                    self.close()
+                return None
+            if self._verify_channel_code(settings, channel_code):
+                return channel_code
+            QMessageBox.warning(
+                self,
+                "채널",
+                "유효한 채널 코드를 확인하지 못했습니다. 다시 입력해주세요.",
+            )
+
+    def _connect_to_channel(self, settings: ServerSettings, channel_code: str) -> None:
         self.config.channel_code = channel_code
         self.store.save(self.config)
-        self._start_service(target_settings, channel_code)
+        self._reset_timer_views(remove_positions=False)
+        self._start_service(settings, channel_code)
+        self.disconnect_button.setEnabled(True)
+
+    def _disconnect_channel(self) -> None:
+        self.timer_service.stop()
+        self._reset_timer_views(remove_positions=False)
+        self.config.channel_code = ""
+        self.store.save(self.config)
+        self.disconnect_button.setEnabled(False)
+
+    def _handle_disconnect_clicked(self) -> None:
+        self._disconnect_channel()
+        self.status_label.setText("채널 연결이 해제되었습니다.")
+        self.status_label.setStyleSheet("color: #ff9800;")
+        self._apply_server_settings(initial=False, force_prompt=True)
 
     def _test_connection(self, settings: ServerSettings) -> bool:
         url = f"{settings.base_url}/api/health"
@@ -331,7 +362,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _prompt_channel_code(self) -> str | None:
-        dialog = ChannelCodeDialog(self, getattr(self.config, "channel_code", "ca01"))
+        dialog = ChannelCodeDialog(self, getattr(self.config, "channel_code", ""))
         return dialog.prompt()
 
     def _verify_channel_code(self, settings: ServerSettings, channel_code: str) -> bool:
@@ -355,6 +386,14 @@ class MainWindow(QMainWindow):
         self.timer_service.update_channel_code(channel_code)
         if not self.timer_service.is_running:
             self.timer_service.start()
+
+    def _reset_timer_views(self, *, remove_positions: bool) -> None:
+        for timer_id in list(self.overlays.keys()):
+            self._hide_overlay(timer_id, remove_position=remove_positions)
+        self.timer_states.clear()
+        self._table_order = []
+        self._row_index = {}
+        self.table.setRowCount(0)
 
     # 타이머 데이터 처리 ----------------------------------------------------
     def _handle_timers_payload(self, payload: Dict) -> None:
@@ -611,6 +650,7 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet(
             "color: #4caf50;" if connected else "color: #ff9800;"
         )
+        self.disconnect_button.setEnabled(connected or bool(self.config.channel_code))
 
     def _on_overlay_moved(self, timer_id: str, x: int, y: int) -> None:
         self.config.timer_positions[timer_id] = (x, y)
@@ -628,7 +668,6 @@ class MainWindow(QMainWindow):
         self.timer_service.stop()
         self.key_listener.stop()
         self._table_update_timer.stop()
-        self._clock_timer.stop()
         for overlay in self.overlays.values():
             overlay.close()
         super().closeEvent(event)
@@ -706,12 +745,3 @@ class MainWindow(QMainWindow):
         self._server_clock_offset_ms = new_offset
         for state in self.timer_states.values():
             state.server_clock_offset_ms = new_offset
-        self._update_clock_label()
-
-    def _update_clock_label(self) -> None:
-        device_now = time.localtime()
-        device_text = time.strftime("%H:%M:%S", device_now)
-        server_ts = time.time() + (self._server_clock_offset_ms / 1000.0)
-        server_now = time.localtime(server_ts)
-        server_text = time.strftime("%H:%M:%S", server_now)
-        self.clock_label.setText(f"서버 {server_text}  기기 {device_text}")
