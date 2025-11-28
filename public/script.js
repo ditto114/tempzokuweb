@@ -682,6 +682,7 @@ function getValidMembers() {
 
 function calculateDistribution(totalNet, totalExpense = getTotalExpenses(), additionalIncentive = 0) {
   const memberCount = members.length;
+  const shareAmounts = new Array(memberCount).fill(0);
   const finalAmounts = new Array(memberCount).fill(0);
   const participatingIndexes = members
     .map((member, index) => (member.participating === false ? null : index))
@@ -694,36 +695,18 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses(), addi
   const extraIncentive = Math.max(0, Math.floor(additionalIncentive));
   const combinedIncentives = totalIncentives + extraIncentive;
   const distributable = totalNet - combinedIncentives - totalExpense;
-  const baseShare = participantCount > 0 ? distributable / participantCount : 0;
 
-  if (participantCount === 0) {
-    incentiveAmounts.forEach((amount, index) => {
-      finalAmounts[index] += amount;
-    });
-    return {
-      baseShare: 0,
-      finalAmounts,
-      totalIncentives: combinedIncentives,
-      participantCount,
-      totalExpense,
-    };
-  }
+  const weights = participatingIndexes.map((index) => {
+    const rate = Math.max(0, toNumber(members[index].rate, 100));
+    return rate / 100;
+  });
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const unitAmount = totalWeight > 0 ? distributable / totalWeight : 0;
 
-  participatingIndexes.forEach((index) => {
-    const member = members[index];
-    const rate = Math.max(0, toNumber(member.rate, 100));
-    const ownShare = baseShare * (rate / 100);
-    const remainderShare = baseShare - ownShare;
-    finalAmounts[index] += ownShare;
-
-    if (participantCount > 1) {
-      const sharePerOther = remainderShare / (participantCount - 1);
-      participatingIndexes.forEach((otherIndex) => {
-        if (otherIndex !== index) {
-          finalAmounts[otherIndex] += sharePerOther;
-        }
-      });
-    }
+  participatingIndexes.forEach((index, order) => {
+    const share = unitAmount * weights[order];
+    shareAmounts[index] = share;
+    finalAmounts[index] = share;
   });
 
   participatingIndexes.forEach((index) => {
@@ -734,12 +717,11 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses(), addi
 
     finalAmounts[index] -= deductionAmount;
 
-    if (participantCount > 1) {
-      const perOther = deductionAmount / (participantCount - 1);
-      participatingIndexes.forEach((otherIndex) => {
-        if (otherIndex !== index) {
-          finalAmounts[otherIndex] += perOther;
-        }
+    const recipients = participatingIndexes.filter((otherIndex) => otherIndex !== index);
+    if (recipients.length > 0) {
+      const perRecipient = deductionAmount / recipients.length;
+      recipients.forEach((otherIndex) => {
+        finalAmounts[otherIndex] += perRecipient;
       });
     }
   });
@@ -749,11 +731,13 @@ function calculateDistribution(totalNet, totalExpense = getTotalExpenses(), addi
   });
 
   return {
-    baseShare,
+    unitAmount,
+    shareAmounts,
     finalAmounts,
     totalIncentives: combinedIncentives,
     participantCount,
     totalExpense,
+    totalWeight,
   };
 }
 
@@ -887,7 +871,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     memberCountLabel.textContent = `${participatingCount} + ${inactiveCount}`;
   }
 
-  const { baseShare, finalAmounts } = calculated;
+  const { shareAmounts, finalAmounts, participantCount } = calculated;
   const rowsToRender = Math.max(20, memberCount);
 
   for (let i = 0; i < rowsToRender; i += 1) {
@@ -938,10 +922,11 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       });
       participantCell.appendChild(participantCheckbox);
 
-      if (member.participating === false || calculated.participantCount === 0) {
+      const shareAmount = shareAmounts[i] ?? 0;
+      if (member.participating === false || participantCount === 0) {
         shareCell.textContent = '-';
       } else {
-        shareCell.textContent = formatCurrency(baseShare);
+        shareCell.textContent = formatCurrency(shareAmount);
       }
 
       createRateControls(member, rateCell, member.rate ?? 100);
@@ -1561,7 +1546,8 @@ function collectDistributionPayload() {
       totalIncentives: distributionData.totalIncentives,
       totalDistribution: totalNet - distributionData.totalIncentives - totalExpense,
       participantCount: distributionData.participantCount,
-      baseShare: distributionData.baseShare,
+      unitAmount: distributionData.unitAmount,
+      totalWeight: distributionData.totalWeight,
     },
   };
 }
