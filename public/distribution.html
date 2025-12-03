@@ -65,7 +65,7 @@
               <tbody>
               </tbody>
             </table>
-            <button id="add-drop-row" class="secondary" data-lockable="true">행 추가</button>
+            <button id="add-drop-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행 추가</button>
           </section>
 
           <section class="card">
@@ -82,7 +82,7 @@
               <tbody>
               </tbody>
             </table>
-            <button id="add-guest-row" class="secondary" data-lockable="true">행 추가</button>
+            <button id="add-guest-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행 추가</button>
           </section>
         </div>
 
@@ -90,8 +90,8 @@
           <div class="card-header">
             <h2>분배표</h2>
             <div class="card-actions">
-              <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true">용병 추가</button>
-              <button id="open-expense-modal" class="secondary mini-button">지출비용 관리</button>
+              <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true" data-hide-when-readonly="true">용병 추가</button>
+              <button id="open-expense-modal" class="secondary mini-button" data-hide-when-readonly="true">지출비용 관리</button>
             </div>
           </div>
 
@@ -178,6 +178,7 @@
           <tbody id="member-management-body">
           </tbody>
         </table>
+        <div class="totals-row member-outstanding-total">미수령 분배금 합계: <span id="outstanding-total">0</span></div>
       </div>
     </div>
   </div>

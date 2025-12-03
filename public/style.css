@@ -285,6 +285,12 @@ button:disabled {
   align-items: center;
 }
 
+.member-outstanding-total {
+  justify-content: flex-end;
+  margin-top: 8px;
+  font-weight: 600;
+}
+
 .sale-field-display {
   display: none;
   font-size: 0.95rem;
@@ -295,6 +301,11 @@ button:disabled {
 .sale-net-display {
   display: inline-block;
   min-width: 80px;
+  text-align: right;
+}
+
+.sale-price-input,
+.net-amount {
   text-align: right;
 }
 
@@ -315,6 +326,17 @@ button:disabled {
 #distribution-table td:nth-child(3),
 #distribution-table td:nth-child(9) {
   text-align: center;
+}
+
+#drop-table th:nth-child(2),
+#drop-table th:nth-child(4),
+#drop-table td:nth-child(2),
+#drop-table td:nth-child(4),
+#guest-table th:nth-child(2),
+#guest-table th:nth-child(4),
+#guest-table td:nth-child(2),
+#guest-table td:nth-child(4) {
+  text-align: right;
 }
 
 #distribution-table td.checkbox-cell {
