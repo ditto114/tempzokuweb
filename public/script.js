@@ -3,6 +3,7 @@ const dropSaleOptions = [
   { label: '499수작', multiplier: 1 - 0.018, type: 'fixed' },
   { label: '999수작', multiplier: 1 - 0.03, type: 'fixed' },
   { label: '2499수작', multiplier: 1 - 0.04, type: 'fixed' },
+  { label: '택배', type: 'delivery' },
   { label: '상점판매', multiplier: 1, type: 'fixed' },
   { label: '직접입력', type: 'manual' },
 ];
@@ -14,7 +15,8 @@ const guestSaleOptions = [
   { label: '직접입력', type: 'manual' },
 ];
 
-const guestDefaultItems = ['목걸이 1', '목걸이 2', '알'];
+const guestDefaultItems = ['목걸이 1', '목걸이 2'];
+const DEFAULT_SALE_ROWS = 2;
 
 let members = [];
 let baseMembers = [];
@@ -195,6 +197,29 @@ function calculateNosujakNet(price) {
     return amount * 0.95;
   }
   return amount * 0.94;
+}
+
+function calculateDeliveryNet(price) {
+  const amount = Math.max(0, Number(price) || 0);
+  if (amount >= 100_000_000) {
+    return amount * 0.93;
+  }
+  if (amount >= 25_000_000) {
+    return amount * 0.94;
+  }
+  if (amount >= 10_000_000) {
+    return amount * 0.95;
+  }
+  if (amount >= 5_000_000) {
+    return amount * 0.96;
+  }
+  if (amount >= 1_000_000) {
+    return amount * 0.973;
+  }
+  if (amount >= 100_000) {
+    return amount * 0.988;
+  }
+  return amount;
 }
 
 function updateBackdropVisibility() {
@@ -403,6 +428,8 @@ function createTableRow(tableBody, saleOptions, rowData = {}) {
     let netValue = 0;
     if (optionType === 'nosujak') {
       netValue = calculateNosujakNet(price);
+    } else if (optionType === 'delivery') {
+      netValue = calculateDeliveryNet(price);
     } else {
       const multiplier = parseFloat(selectedOption?.dataset.multiplier) || 0;
       netValue = price * multiplier;
@@ -440,6 +467,7 @@ function syncSaleRowDisplay(row) {
   if (!row) {
     return;
   }
+  const isReadonlyRow = row.classList.contains('sale-row-readonly');
   const itemInput = row.querySelector('td:nth-child(1) input');
   const itemDisplay = row.querySelector('td:nth-child(1) .sale-field-display');
   if (itemDisplay) {
@@ -451,7 +479,7 @@ function syncSaleRowDisplay(row) {
   const priceDisplay = row.querySelector('td:nth-child(2) .sale-price-display');
   if (priceDisplay) {
     const units = priceInput ? parseFloat(priceInput.value) || 0 : 0;
-    priceDisplay.textContent = formatSalePriceDisplay(units);
+    priceDisplay.textContent = isReadonlyRow && units === 0 ? '-' : formatSalePriceDisplay(units);
   }
 
   const methodSelect = row.querySelector('td:nth-child(3) select');
@@ -464,7 +492,7 @@ function syncSaleRowDisplay(row) {
   const netDisplay = row.querySelector('.sale-net-display');
   if (netDisplay) {
     const netValue = netInput ? parseFloat(netInput.dataset.value) || 0 : 0;
-    netDisplay.textContent = formatCurrency(netValue);
+    netDisplay.textContent = isReadonlyRow && netValue === 0 ? '-' : formatCurrency(netValue);
   }
 }
 
@@ -779,8 +807,9 @@ function updateTotals(distributionData = null) {
 }
 
 function createRateControls(member, rateCell, rateValue) {
+  const effectiveRate = member.participating === false ? 0 : rateValue;
   if (isReadOnly) {
-    rateCell.textContent = `${Number(rateValue).toLocaleString('ko-KR')}%`;
+    rateCell.textContent = `${Number(effectiveRate).toLocaleString('ko-KR')}%`;
     return;
   }
 
@@ -791,7 +820,7 @@ function createRateControls(member, rateCell, rateValue) {
   rateInput.type = 'number';
   rateInput.min = '0';
   rateInput.step = '1';
-  rateInput.value = rateValue;
+  rateInput.value = effectiveRate;
   rateInput.classList.add('distribution-input');
 
   const controlContainer = document.createElement('div');
@@ -834,7 +863,7 @@ function createRateControls(member, rateCell, rateValue) {
     commitRateChange(toNumber(rateInput.value, rateValue) - 5);
   });
 
-  if (isReadOnly) {
+  if (isReadOnly || member.participating === false) {
     rateInput.disabled = true;
     increaseButton.disabled = true;
     decreaseButton.disabled = true;
@@ -917,7 +946,22 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       participantCheckbox.disabled = isReadOnly;
       participantCheckbox.classList.add('distribution-checkbox');
       participantCheckbox.addEventListener('change', () => {
-        member.participating = participantCheckbox.checked;
+        const checked = participantCheckbox.checked;
+        if (!checked) {
+          member.previousRate = member.rate ?? 0;
+          member.rate = 0;
+        } else {
+          member.participating = true;
+          if (member.rate === 0) {
+            if (Number.isFinite(member.previousRate) && member.previousRate > 0) {
+              member.rate = member.previousRate;
+            } else if (!Number.isFinite(member.previousRate)) {
+              member.rate = 100;
+            }
+          }
+          member.previousRate = undefined;
+        }
+        member.participating = checked;
         updateTotals();
       });
       participantCell.appendChild(participantCheckbox);
@@ -929,17 +973,27 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
         shareCell.textContent = formatCurrency(shareAmount);
       }
 
+      if (member.participating === false) {
+        member.rate = 0;
+      }
       createRateControls(member, rateCell, member.rate ?? 100);
 
       if (isReadOnly) {
-        deductionCell.textContent = `${Number(member.deduction ?? 0).toLocaleString('ko-KR', {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 2,
-        })}만`;
-        incentiveCell.textContent = `${Number(member.incentive ?? 0).toLocaleString('ko-KR', {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 2,
-        })}만`;
+        const deductionValue = Math.max(0, Number(member.deduction ?? 0));
+        const incentiveValue = Math.max(0, Number(member.incentive ?? 0));
+
+        deductionCell.textContent = deductionValue === 0
+          ? '-'
+          : `${deductionValue.toLocaleString('ko-KR', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+          })}만`;
+        incentiveCell.textContent = incentiveValue === 0
+          ? '-'
+          : `${incentiveValue.toLocaleString('ko-KR', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+          })}만`;
       } else {
         const deductionInput = document.createElement('input');
         deductionInput.type = 'number';
@@ -971,7 +1025,8 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       const paidCheckbox = document.createElement('input');
       paidCheckbox.type = 'checkbox';
       paidCheckbox.checked = member.paid === true;
-      paidCheckbox.disabled = isReadOnly;
+      paidCheckbox.disabled = false;
+      paidCheckbox.dataset.alwaysEnabled = 'true';
       paidCheckbox.classList.add('distribution-checkbox');
       paidCheckbox.addEventListener('change', () => {
         member.paid = paidCheckbox.checked;
@@ -1022,8 +1077,14 @@ function renderMemberModal() {
     emptyCell.style.textAlign = 'center';
     emptyRow.appendChild(emptyCell);
     tableBody.appendChild(emptyRow);
+    const outstandingTotalLabel = document.getElementById('outstanding-total');
+    if (outstandingTotalLabel) {
+      outstandingTotalLabel.textContent = '0';
+    }
     return;
   }
+
+  let outstandingTotal = 0;
 
   baseMembers.forEach((member) => {
     const row = document.createElement('tr');
@@ -1051,7 +1112,9 @@ function renderMemberModal() {
     includedCell.appendChild(includedCheckbox);
 
     const outstandingCell = document.createElement('td');
-    outstandingCell.textContent = formatCurrency(member.outstandingAmount || 0);
+    const outstandingValue = Math.max(0, toNumber(member.outstandingAmount, 0));
+    outstandingCell.textContent = formatCurrency(outstandingValue);
+    outstandingTotal += outstandingValue;
 
     const actionCell = document.createElement('td');
     const deleteButton = document.createElement('button');
@@ -1068,6 +1131,11 @@ function renderMemberModal() {
 
     tableBody.appendChild(row);
   });
+
+  const outstandingTotalLabel = document.getElementById('outstanding-total');
+  if (outstandingTotalLabel) {
+    outstandingTotalLabel.textContent = formatCurrency(outstandingTotal);
+  }
 }
 
 function openMemberModal() {
@@ -1233,6 +1301,10 @@ function applyReadOnlyState() {
   }
 
   editorPage.querySelectorAll('input, select').forEach((element) => {
+    if (element.dataset.alwaysEnabled === 'true') {
+      element.disabled = false;
+      return;
+    }
     if (element.hasAttribute('data-lockable')) {
       element.disabled = isReadOnly;
     } else if (element.dataset.saleField === 'true') {
@@ -1252,6 +1324,10 @@ function applyReadOnlyState() {
 
   editorPage.querySelectorAll('button[data-lockable="true"]').forEach((button) => {
     button.disabled = isReadOnly;
+  });
+
+  editorPage.querySelectorAll('[data-hide-when-readonly]').forEach((element) => {
+    element.classList.toggle('hidden', isReadOnly);
   });
 }
 
@@ -1277,7 +1353,7 @@ function prepareNewDistribution() {
 
   setExpenses([]);
 
-  populateSaleTable('drop-table', dropSaleOptions, [], 3);
+  populateSaleTable('drop-table', dropSaleOptions, [], DEFAULT_SALE_ROWS);
   populateSaleTable(
     'guest-table',
     guestSaleOptions,
@@ -1332,7 +1408,7 @@ function populateFromDistributionData(payload = {}) {
 
   setExpenses(Array.isArray(payload.expenses) ? payload.expenses : []);
 
-  populateSaleTable('drop-table', dropSaleOptions, dropData, 3);
+  populateSaleTable('drop-table', dropSaleOptions, dropData, DEFAULT_SALE_ROWS);
   populateSaleTable('guest-table', guestSaleOptions, guestData, guestDefaultItems.length);
   updateTotals();
 }
@@ -1533,13 +1609,16 @@ function collectDistributionPayload() {
         amount: Math.floor(amountUnits * 10000),
       };
     }),
-    members: members.map((member, index) => ({
-      ...member,
-      included: member.included !== false,
-      participating: member.participating !== false,
-      paid: member.paid === true,
-      finalAmount: distributionData.finalAmounts[index] ?? 0,
-    })),
+    members: members.map((member, index) => {
+      const { previousRate, ...memberData } = member;
+      return {
+        ...memberData,
+        included: member.included !== false,
+        participating: member.participating !== false,
+        paid: member.paid === true,
+        finalAmount: distributionData.finalAmounts[index] ?? 0,
+      };
+    }),
     totals: {
       totalNet,
       totalExpenses: totalExpense,
@@ -1595,7 +1674,7 @@ async function handleSaveDistribution() {
 }
 
 function initTables() {
-  populateSaleTable('drop-table', dropSaleOptions, [], 3);
+  populateSaleTable('drop-table', dropSaleOptions, [], DEFAULT_SALE_ROWS);
   populateSaleTable(
     'guest-table',
     guestSaleOptions,
