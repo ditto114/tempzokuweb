@@ -66,6 +66,11 @@ h1 {
   font-size: 2rem;
 }
 
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+}
+
 .card {
   background-color: var(--card-bg);
   border-radius: 12px;
@@ -114,8 +119,8 @@ table thead {
 table th,
 table td {
   border: 1px solid var(--border);
-  padding: 8px 6px;
-  text-align: middle;
+  padding: 4px 6px;
+  text-align: center;
   vertical-align: middle;
 }
 
@@ -328,12 +333,9 @@ button:disabled {
   text-align: center;
 }
 
-#drop-table th:nth-child(2),
-#drop-table th:nth-child(4),
+
 #drop-table td:nth-child(2),
 #drop-table td:nth-child(4),
-#guest-table th:nth-child(2),
-#guest-table th:nth-child(4),
 #guest-table td:nth-child(2),
 #guest-table td:nth-child(4) {
   text-align: right;
