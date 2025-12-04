@@ -98,7 +98,13 @@ let shortcutModalKeyListener = null;
 let viewModeDragState = null;
 
 function clampTimerDuration(value) {
-  if (!Number.isFinite(value) || value <= 0) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_TIMER_DURATION_MS;
+  }
+  if (value === 0) {
+    return 0;
+  }
+  if (value < 0) {
     return DEFAULT_TIMER_DURATION_MS;
   }
   return Math.min(Math.max(value, MIN_TIMER_DURATION_MS), MAX_TIMER_DURATION_MS);
@@ -676,6 +682,15 @@ function getTimerRemaining(timer, now = Date.now()) {
   if (!timer) {
     return 0;
   }
+  if (timer.durationMs === 0) {
+    if (timer.isRunning && typeof timer.endTime === 'number') {
+      const effectiveNow = getEffectiveNow(now);
+      const elapsed =
+        effectiveNow - timer.endTime + Math.max(0, Number.isFinite(timer.remainingMs) ? timer.remainingMs : 0);
+      return Math.max(0, elapsed);
+    }
+    return Math.max(0, Number.isFinite(timer.remainingMs) ? timer.remainingMs : 0);
+  }
   if (timer.isRunning && typeof timer.endTime === 'number') {
     const effectiveNow = getEffectiveNow(now);
     return Math.max(0, timer.endTime - effectiveNow);
@@ -981,7 +996,7 @@ function createTimerCard(timer, slotIndex) {
     display.textContent = formatTimerDisplay(remaining);
     if (!timer.isRunning && remaining === 0) {
       display.classList.add('finished');
-    } else if (remaining > 0 && remaining <= 60 * 1000) {
+    } else if (timer.durationMs > 0 && remaining > 0 && remaining <= 60 * 1000) {
       display.classList.add('critical');
     }
     timerDisplays.set(timer.id, display);
@@ -990,15 +1005,16 @@ function createTimerCard(timer, slotIndex) {
   info.appendChild(infoHeader);
   info.appendChild(display);
 
-  const durationMs = Math.max(timer.durationMs, 1);
-  const progressRatio = Math.max(0, Math.min(1, remaining / durationMs));
+  const isStopwatch = timer.durationMs === 0;
+  const durationMs = isStopwatch ? 1 : Math.max(timer.durationMs, 1);
+  const progressRatio = isStopwatch ? 0 : Math.max(0, Math.min(1, remaining / durationMs));
   const progress = document.createElement('div');
   progress.className = 'timer-progress';
   const progressInner = document.createElement('div');
   progressInner.className = 'timer-progress-bar';
   progressInner.style.width = `${progressRatio * 100}%`;
   if (timer.isRunning) {
-    if (remaining > 0 && remaining <= 60 * 1000) {
+    if (!isStopwatch && remaining > 0 && remaining <= 60 * 1000) {
       progressInner.classList.add('critical');
     }
   } else {
@@ -1370,8 +1386,8 @@ function attachInlineEditor(timer, { nameInput, minuteInput, secondInput }) {
   const submitChanges = async () => {
     const { name, durationMs } = normalizeValues();
 
-    if (durationMs < MIN_TIMER_DURATION_MS) {
-      window.alert('타이머 시간은 최소 5초 이상이어야 합니다.');
+    if (durationMs !== 0 && durationMs < MIN_TIMER_DURATION_MS) {
+      window.alert('타이머 시간은 0초 또는 최소 5초 이상이어야 합니다.');
       applyTimerDefaults();
       return;
     }
@@ -1702,7 +1718,7 @@ function updateTimerDisplays() {
       element.classList.remove('critical');
     } else {
       element.classList.remove('finished');
-      if (remaining > 0 && remaining <= 60 * 1000) {
+      if (timer.durationMs > 0 && remaining > 0 && remaining <= 60 * 1000) {
         element.classList.add('critical');
       } else {
         element.classList.remove('critical');
@@ -1711,12 +1727,17 @@ function updateTimerDisplays() {
 
     const progressElement = timerProgressBars.get(id);
     if (progressElement) {
-      const duration = Math.max(timer.durationMs, 1);
-      const ratio = Math.max(0, Math.min(1, remaining / duration));
-      progressElement.style.width = `${ratio * 100}%`;
-      const highlightCritical =
-        timer.isRunning && !isFinished && remaining > 0 && remaining <= 60 * 1000;
-      progressElement.classList.toggle('critical', Boolean(highlightCritical));
+      if (timer.durationMs === 0) {
+        progressElement.style.width = '0%';
+        progressElement.classList.remove('critical');
+      } else {
+        const duration = Math.max(timer.durationMs, 1);
+        const ratio = Math.max(0, Math.min(1, remaining / duration));
+        progressElement.style.width = `${ratio * 100}%`;
+        const highlightCritical =
+          timer.isRunning && !isFinished && remaining > 0 && remaining <= 60 * 1000;
+        progressElement.classList.toggle('critical', Boolean(highlightCritical));
+      }
       progressElement.classList.toggle('paused', !timer.isRunning);
     }
   });

@@ -186,7 +186,13 @@ function requireChannel(req, res, next) {
 }
 
 function clampTimerDuration(value) {
-  if (!Number.isFinite(value) || value <= 0) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_TIMER_DURATION_MS;
+  }
+  if (value === 0) {
+    return 0;
+  }
+  if (value < 0) {
     return DEFAULT_TIMER_DURATION_MS;
   }
   return Math.min(Math.max(value, MIN_TIMER_DURATION_MS), MAX_TIMER_DURATION_MS);
@@ -195,6 +201,13 @@ function clampTimerDuration(value) {
 function getTimerRemaining(timer, now = Date.now()) {
   if (!timer) {
     return 0;
+  }
+  if (timer.durationMs === 0) {
+    if (timer.isRunning && typeof timer.endTime === 'number') {
+      const elapsed = now - timer.endTime + Math.max(0, Number.isFinite(timer.remainingMs) ? timer.remainingMs : 0);
+      return Math.max(0, elapsed);
+    }
+    return Math.max(0, Number.isFinite(timer.remainingMs) ? timer.remainingMs : 0);
   }
   if (timer.isRunning && typeof timer.endTime === 'number') {
     return Math.max(0, timer.endTime - now);
@@ -1099,7 +1112,7 @@ app.put('/api/timers/:id', requireChannel, async (req, res) => {
     timer.name = name.trim();
   }
 
-  if (Number.isFinite(duration) && duration > 0) {
+  if (Number.isFinite(duration) && duration >= 0) {
     const safeDuration = clampTimerDuration(duration);
     timer.durationMs = safeDuration;
     timer.remainingMs = safeDuration;
@@ -1138,17 +1151,30 @@ app.post('/api/timers/:id/start', requireChannel, async (req, res) => {
   const { duration } = req.body ?? {};
   const now = Date.now();
 
-  if (Number.isFinite(duration) && duration > 0) {
+  if (Number.isFinite(duration)) {
     const safeDuration = clampTimerDuration(duration);
-    timer.durationMs = safeDuration;
-    timer.remainingMs = safeDuration;
+    if (safeDuration !== timer.durationMs) {
+      timer.durationMs = safeDuration;
+      timer.remainingMs = safeDuration === 0 ? 0 : safeDuration;
+      timer.isRunning = false;
+      timer.endTime = null;
+    }
   }
 
-  const remaining = getTimerRemaining(timer, now) || timer.durationMs;
-  timer.remainingMs = remaining <= 0 ? timer.durationMs : remaining;
-  timer.isRunning = true;
-  timer.endTime = now + timer.remainingMs;
-  timer.updatedAt = now;
+  const isStopwatch = timer.durationMs === 0;
+  if (isStopwatch) {
+    const elapsed = getTimerRemaining(timer, now);
+    timer.remainingMs = elapsed;
+    timer.isRunning = true;
+    timer.endTime = now;
+    timer.updatedAt = now;
+  } else {
+    const remaining = getTimerRemaining(timer, now) || timer.durationMs;
+    timer.remainingMs = remaining <= 0 ? timer.durationMs : remaining;
+    timer.isRunning = true;
+    timer.endTime = now + timer.remainingMs;
+    timer.updatedAt = now;
+  }
 
   try {
     await persistTimer(timer);
@@ -1390,6 +1416,10 @@ setInterval(async () => {
     }
 
     for (const timer of channelTimers.values()) {
+      if (timer.durationMs === 0) {
+        continue;
+      }
+
       if (!timer.isRunning || typeof timer.endTime !== 'number') {
         continue;
       }
