@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
 
 function startDiscordBot(token) {
   if (!token) {
@@ -16,11 +16,11 @@ function startDiscordBot(token) {
     partials: [Partials.Channel],
   });
 
-  client.once('ready', () => {
+  client.once(Events.ClientReady, () => {
     console.log(`디스코드 봇 로그인: ${client.user.tag}`);
   });
 
-  client.on('messageCreate', (message) => {
+  client.on(Events.MessageCreate, (message) => {
     if (message.author.bot) {
       return;
     }
