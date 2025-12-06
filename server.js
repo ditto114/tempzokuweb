@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
+const { startDiscordBot } = require('./discordBot');
 
 const app = express();
 const PORT = process.env.PORT || 47984;
@@ -1436,6 +1438,8 @@ setInterval(() => {
     }
   }
 }, 20000);
+
+startDiscordBot(process.env.DISCORD_TOKEN);
 
 initializeDatabase()
   .then(() => {
