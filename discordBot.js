@@ -30,10 +30,12 @@ function createMemberPool() {
 
 async function fetchMembers(pool) {
   const [rows] = await pool.query(
-    'SELECT nickname, display_order FROM members ORDER BY display_order ASC, id ASC',
+    'SELECT nickname, job, party, display_order FROM members ORDER BY display_order ASC, id ASC',
   );
   return rows.map((row) => ({
     nickname: row.nickname,
+    job: row.job,
+    party: row.party,
     displayOrder: row.display_order,
   }));
 }
@@ -98,6 +100,20 @@ function startDiscordBot(token) {
             .map((member) => member.nickname || '-')
             .join('\n');
 
+          const partyMembers = {
+            1: [],
+            2: [],
+            3: [],
+          };
+
+          members.forEach((member) => {
+            if ([1, 2, 3].includes(Number(member.party))) {
+              const nickname = member.nickname || '-';
+              const job = member.job || '-';
+              partyMembers[Number(member.party)].push(`${nickname} | ${job}`);
+            }
+          });
+
           return message.channel.send({
             embeds: [
               {
@@ -105,6 +121,21 @@ function startDiscordBot(token) {
                 fields: [
                   { name: '순번', value: orderColumn, inline: true },
                   { name: '닉네임', value: nicknameColumn, inline: true },
+                  {
+                    name: '1파티',
+                    value: partyMembers[1].join('\n') || '없음',
+                    inline: true,
+                  },
+                  {
+                    name: '2파티',
+                    value: partyMembers[2].join('\n') || '없음',
+                    inline: true,
+                  },
+                  {
+                    name: '3파티',
+                    value: partyMembers[3].join('\n') || '없음',
+                    inline: true,
+                  },
                 ],
               },
             ],
@@ -116,6 +147,90 @@ function startDiscordBot(token) {
             .send('공대원 목록을 불러오는 중 오류가 발생했습니다.')
             .catch((sendError) => console.error('디스코드 메시지 전송 실패:', sendError));
         });
+      return;
+    }
+
+    if (message.content.trim() === '!DB') {
+      (async () => {
+        try {
+          const [rows] = await memberPool.query(
+            'SELECT nickname, job, party FROM members ORDER BY id ASC',
+          );
+
+          const dmChannel = await message.author.createDM();
+
+          const dataLines = rows.map((row) => {
+            const partyValue = row.party === null || row.party === undefined ? 'null' : row.party;
+            return `${row.nickname}/${row.job}/${partyValue}`;
+          });
+
+          await dmChannel.send({
+            content: dataLines.length > 0 ? dataLines.join('\n') : '등록된 데이터가 없습니다.',
+          });
+
+          await dmChannel.send({
+            content: '변경할 값을 "닉네임/직업/파티" 형식으로 입력해주세요. (예: 홍길동/비숍/2)',
+          });
+
+          const collector = dmChannel.createMessageCollector({
+            filter: (dmMessage) => dmMessage.author.id === message.author.id,
+            max: 1,
+            time: 20000,
+          });
+
+          collector.on('collect', async (dmMessage) => {
+            const input = dmMessage.content.trim();
+            const parts = input.split('/');
+
+            if (parts.length !== 3) {
+              await dmChannel.send('형식이 올바르지 않습니다. 닉네임/직업/파티 형식으로 입력해주세요.');
+              return;
+            }
+
+            const [nicknameInput, jobInput, partyInput] = parts.map((part) => part.trim());
+
+            if (!nicknameInput || !jobInput || !partyInput) {
+              await dmChannel.send('모든 값을 입력해주세요. (닉네임/직업/파티)');
+              return;
+            }
+
+            const partyNumber = Number(partyInput);
+
+            if (!Number.isInteger(partyNumber) || partyNumber < 1 || partyNumber > 3) {
+              await dmChannel.send('파티 값은 1, 2, 3 중 하나의 숫자여야 합니다.');
+              return;
+            }
+
+            try {
+              const [result] = await memberPool.query('UPDATE members SET party = ? WHERE nickname = ?', [partyNumber, nicknameInput]);
+
+              if (result.affectedRows === 0) {
+                await dmChannel.send(`${nicknameInput} 님을 찾을 수 없습니다.`);
+                return;
+              }
+
+              await dmChannel.send(`${nicknameInput}님의 party 값이 ${partyNumber}로 수정되었습니다.`);
+            } catch (updateError) {
+              console.error('파티 업데이트 실패:', updateError);
+              await dmChannel.send('파티 정보를 업데이트하는 중 오류가 발생했습니다.');
+            }
+          });
+
+          collector.on('end', (collected) => {
+            if (collected.size === 0) {
+              dmChannel
+                .send('시간 초과')
+                .catch((timeoutError) => console.error('시간 초과 메시지 전송 실패:', timeoutError));
+            }
+          });
+        } catch (error) {
+          console.error('DB 조회 실패:', error);
+          message.author
+            .send('DB 데이터를 불러오는 중 오류가 발생했습니다.')
+            .catch((sendError) => console.error('DM 전송 실패:', sendError));
+        }
+      })();
+
       return;
     }
 
