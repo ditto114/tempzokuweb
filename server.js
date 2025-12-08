@@ -525,6 +525,7 @@ async function initializeDatabase() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       nickname VARCHAR(100) NOT NULL,
       job VARCHAR(100) NOT NULL,
+      display_order INT NOT NULL DEFAULT 0,
       included TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -536,6 +537,41 @@ async function initializeDatabase() {
     await connection.query(
       'ALTER TABLE members ADD COLUMN included TINYINT(1) NOT NULL DEFAULT 1 AFTER job',
     );
+  }
+  const [displayOrderColumn] = await connection.query(
+    "SHOW COLUMNS FROM members LIKE 'display_order'",
+  );
+  if (displayOrderColumn.length === 0) {
+    await connection.query(
+      'ALTER TABLE members ADD COLUMN display_order INT NOT NULL DEFAULT 0 AFTER job',
+    );
+  }
+  const [memberRows] = await connection.query(
+    'SELECT id, display_order FROM members ORDER BY display_order ASC, id ASC',
+  );
+  const seenOrders = new Set();
+  let needsNormalization = false;
+  memberRows.forEach((row) => {
+    const orderValue = Number(row.display_order);
+    if (!Number.isInteger(orderValue) || orderValue < 1 || seenOrders.has(orderValue)) {
+      needsNormalization = true;
+      return;
+    }
+    seenOrders.add(orderValue);
+  });
+  if (needsNormalization && memberRows.length > 0) {
+    await connection.beginTransaction();
+    try {
+      for (let i = 0; i < memberRows.length; i += 1) {
+        const row = memberRows[i];
+        const normalizedOrder = i + 1;
+        await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [normalizedOrder, row.id]);
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    }
   }
   await connection.query(`
     CREATE TABLE IF NOT EXISTS distributions (
@@ -733,7 +769,9 @@ app.get('/api/session', (req, res) => {
 
 app.get('/api/members', requireApiAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, nickname, job, included FROM members ORDER BY id ASC');
+    const [rows] = await pool.query(
+      'SELECT id, nickname, job, included, display_order FROM members ORDER BY display_order ASC, id ASC',
+    );
     const [distributionRows] = await pool.query('SELECT data FROM distributions');
 
     const outstandingMap = new Map();
@@ -806,6 +844,7 @@ app.get('/api/members', requireApiAuth, async (req, res) => {
       nickname: row.nickname,
       job: row.job,
       included: row.included === 1 || row.included === true,
+      displayOrder: Number(row.display_order) || 0,
       outstandingAmount: Math.max(0, Math.floor(outstandingMap.get(row.id) ?? 0)),
     }));
 
@@ -824,8 +863,17 @@ app.post('/api/members', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const [result] = await pool.query('INSERT INTO members (nickname, job) VALUES (?, ?)', [nickname, job]);
-    res.status(201).json({ id: result.insertId, nickname, job, included: true, outstandingAmount: 0 });
+    const [[{ maxOrder }]] = await pool.query(
+      'SELECT COALESCE(MAX(display_order), 0) AS maxOrder FROM members',
+    );
+    const displayOrder = Number(maxOrder) + 1;
+    const [result] = await pool.query(
+      'INSERT INTO members (nickname, job, display_order) VALUES (?, ?, ?)',
+      [nickname, job, displayOrder],
+    );
+    res
+      .status(201)
+      .json({ id: result.insertId, nickname, job, included: true, displayOrder, outstandingAmount: 0 });
   } catch (error) {
     console.error('Error adding member:', error);
     res.status(500).json({ message: '공대원 정보를 저장하는 중 오류가 발생했습니다.' });
@@ -849,6 +897,48 @@ app.patch('/api/members/:id', requireApiAuth, async (req, res) => {
   } catch (error) {
     console.error('Error updating member inclusion:', error);
     res.status(500).json({ message: '공대원 정보를 수정하는 중 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/api/members/reorder', requireApiAuth, async (req, res) => {
+  const { sourceId, targetId } = req.body || {};
+  if (!Number.isInteger(sourceId) || !Number.isInteger(targetId)) {
+    return res.status(400).json({ message: '올바른 공대원 정보를 전달해주세요.' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[source]] = await connection.query(
+      'SELECT display_order FROM members WHERE id = ? LIMIT 1',
+      [sourceId],
+    );
+    const [[target]] = await connection.query(
+      'SELECT display_order FROM members WHERE id = ? LIMIT 1',
+      [targetId],
+    );
+
+    if (!source || !target) {
+      await connection.rollback();
+      return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
+    }
+
+    await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [target.display_order, sourceId]);
+    await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [source.display_order, targetId]);
+
+    await connection.commit();
+    return res.json({
+      sourceId,
+      sourceOrder: target.display_order,
+      targetId,
+      targetOrder: source.display_order,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error reordering members:', error);
+    return res.status(500).json({ message: '순번을 변경하는 중 오류가 발생했습니다.' });
+  } finally {
+    connection.release();
   }
 });
 
