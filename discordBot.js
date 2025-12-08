@@ -49,7 +49,7 @@ function startDiscordBot(token) {
       );
 
       message.channel
-        .send({ content: '다음 옵션 중 하나를 선택하세요.', components: [buttonRow] })
+        .send({ components: [buttonRow] })
         .catch((error) => console.error('디스코드 메시지 전송 실패:', error));
       return;
     }
@@ -111,14 +111,14 @@ function startDiscordBot(token) {
       const nickname = interaction.member?.nickname || interaction.user.username;
       const suffix =
         interaction.customId === 'die_penalty'
-          ? '다이(패널티 적용)'
-          : '다이(패널티 검토 필요)';
+          ? '패널티 적용'
+          : '패널티 검토';
 
       interaction
         .deferUpdate()
         .then(() =>
           interaction.channel
-            .send({ content: `${timeString} ${nickname} ${suffix}` })
+            .send({ content: `:alarm_clock: ${timeString} :skull_crossbones:${nickname} - ${suffix}` })
             .catch((error) => console.error('디스코드 메시지 전송 실패:', error))
         )
         .catch((error) => console.error('디스코드 버튼 응답 실패:', error));
