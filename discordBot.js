@@ -30,11 +30,11 @@ function createMemberPool() {
 
 async function fetchMembers(pool) {
   const [rows] = await pool.query(
-    'SELECT nickname, job FROM members ORDER BY job ASC, nickname ASC',
+    'SELECT nickname, display_order FROM members ORDER BY display_order ASC, id ASC',
   );
   return rows.map((row) => ({
     nickname: row.nickname,
-    job: row.job,
+    displayOrder: row.display_order,
   }));
 }
 
@@ -91,7 +91,9 @@ function startDiscordBot(token) {
             return message.channel.send('등록된 공대원이 없습니다.');
           }
 
-          const jobColumn = members.map((member) => member.job || '-').join('\n');
+          const orderColumn = members
+            .map((member) => (Number.isInteger(member.displayOrder) ? member.displayOrder : '-'))
+            .join('\n');
           const nicknameColumn = members
             .map((member) => member.nickname || '-')
             .join('\n');
@@ -101,7 +103,7 @@ function startDiscordBot(token) {
               {
                 title: '공대원 목록',
                 fields: [
-                  { name: '직업', value: jobColumn, inline: true },
+                  { name: '순번', value: orderColumn, inline: true },
                   { name: '닉네임', value: nicknameColumn, inline: true },
                 ],
               },
