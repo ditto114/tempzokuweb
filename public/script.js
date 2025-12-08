@@ -132,6 +132,82 @@ function sanitizeNumericInput(value, maxDigits = 7) {
   return result.endsWith('.') ? result.slice(0, -1) : result;
 }
 
+function normalizeMemberOrder(list) {
+  const ordered = [...list];
+  ordered.forEach((member, index) => {
+    const numericOrder = Number(member.order);
+    member.order = Number.isFinite(numericOrder) ? numericOrder : index + 1;
+  });
+
+  ordered.sort((a, b) => {
+    const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+    if (orderDiff !== 0) {
+      return orderDiff;
+    }
+    return (a.id ?? 0) - (b.id ?? 0);
+  });
+
+  ordered.forEach((member, index) => {
+    member.order = index + 1;
+  });
+
+  return ordered;
+}
+
+function syncMembersOrderWithBase() {
+  if (!Array.isArray(members) || members.length === 0) {
+    return;
+  }
+
+  const orderMap = new Map(baseMembers.map((member, index) => [member.id, index]));
+
+  members.sort((a, b) => {
+    const orderA = orderMap.has(a.id) ? orderMap.get(a.id) : Number.MAX_SAFE_INTEGER;
+    const orderB = orderMap.has(b.id) ? orderMap.get(b.id) : Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    return (a.id ?? 0) - (b.id ?? 0);
+  });
+
+  members.forEach((member, index) => {
+    if (orderMap.has(member.id)) {
+      member.order = (orderMap.get(member.id) ?? 0) + 1;
+    } else if (!Number.isFinite(member.order)) {
+      member.order = baseMembers.length + index + 1;
+    }
+  });
+}
+
+function moveMemberOrder(memberId, direction) {
+  if (!memberId || direction === 0) {
+    return;
+  }
+
+  baseMembers = normalizeMemberOrder(baseMembers);
+  const currentIndex = baseMembers.findIndex((member) => member.id === memberId);
+  if (currentIndex === -1) {
+    return;
+  }
+
+  const targetIndex = currentIndex + direction;
+  if (targetIndex < 0 || targetIndex >= baseMembers.length) {
+    return;
+  }
+
+  const currentOrder = baseMembers[currentIndex].order;
+  baseMembers[currentIndex].order = baseMembers[targetIndex].order;
+  baseMembers[targetIndex].order = currentOrder;
+
+  baseMembers = normalizeMemberOrder(baseMembers);
+  syncMembersOrderWithBase();
+  renderMemberModal();
+
+  if (currentView === 'editor') {
+    updateTotals();
+  }
+}
+
 function enforcePriceInputLength(input) {
   if (!input) {
     return '';
@@ -1067,12 +1143,14 @@ function renderMemberModal() {
     return;
   }
 
+  baseMembers = normalizeMemberOrder(baseMembers);
+
   tableBody.innerHTML = '';
 
   if (baseMembers.length === 0) {
     const emptyRow = document.createElement('tr');
     const emptyCell = document.createElement('td');
-    emptyCell.colSpan = 5;
+    emptyCell.colSpan = 6;
     emptyCell.textContent = '등록된 공대원이 없습니다.';
     emptyCell.style.textAlign = 'center';
     emptyRow.appendChild(emptyCell);
@@ -1086,8 +1164,36 @@ function renderMemberModal() {
 
   let outstandingTotal = 0;
 
-  baseMembers.forEach((member) => {
+  baseMembers.forEach((member, index) => {
     const row = document.createElement('tr');
+
+    const orderCell = document.createElement('td');
+    orderCell.classList.add('order-cell');
+
+    const orderControls = document.createElement('div');
+    orderControls.classList.add('order-controls');
+
+    const moveUpButton = document.createElement('button');
+    moveUpButton.type = 'button';
+    moveUpButton.textContent = '▲';
+    moveUpButton.classList.add('icon-button');
+    moveUpButton.disabled = index === 0;
+    moveUpButton.addEventListener('click', () => moveMemberOrder(member.id, -1));
+
+    const moveDownButton = document.createElement('button');
+    moveDownButton.type = 'button';
+    moveDownButton.textContent = '▼';
+    moveDownButton.classList.add('icon-button');
+    moveDownButton.disabled = index === baseMembers.length - 1;
+    moveDownButton.addEventListener('click', () => moveMemberOrder(member.id, 1));
+
+    const orderLabel = document.createElement('span');
+    orderLabel.textContent = member.order;
+
+    orderControls.appendChild(moveUpButton);
+    orderControls.appendChild(moveDownButton);
+    orderControls.appendChild(orderLabel);
+    orderCell.appendChild(orderControls);
 
     const nicknameCell = document.createElement('td');
     nicknameCell.textContent = member.nickname;
@@ -1123,6 +1229,7 @@ function renderMemberModal() {
     deleteButton.addEventListener('click', () => deleteMember(member.id));
     actionCell.appendChild(deleteButton);
 
+    row.appendChild(orderCell);
     row.appendChild(nicknameCell);
     row.appendChild(jobCell);
     row.appendChild(includedCell);
@@ -1189,15 +1296,21 @@ async function fetchMembers() {
     }
     const data = await response.json();
     const previousMembers = new Map(members.map((member) => [member.id, member]));
-    baseMembers = data.map((member) => {
+    baseMembers = data.map((member, index) => {
+      const previous = previousMembers.get(member.id);
       const included = member.included !== false;
       const outstandingAmount = Math.max(0, toNumber(member.outstandingAmount, 0));
       return {
         ...member,
         included,
         outstandingAmount,
+        order: Number.isFinite(previous?.order)
+          ? previous.order
+          : index + 1,
       };
     });
+
+    baseMembers = normalizeMemberOrder(baseMembers);
 
     if (useBaseMembersForEditor || members.length === 0) {
       members = baseMembers.map((member) => {
@@ -1218,6 +1331,7 @@ async function fetchMembers() {
       }
     }
 
+    syncMembersOrderWithBase();
     renderMemberModal();
   } catch (error) {
     console.error(error);
