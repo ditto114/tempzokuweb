@@ -1278,8 +1278,8 @@ function handleMemberReorder(currentIndex, direction) {
   const targetOrder = normalizeDisplayOrder(targetMember.displayOrder, targetIndex + 1);
 
   [baseMembers[currentIndex], baseMembers[targetIndex]] = [targetMember, currentMember];
-  baseMembers[currentIndex].displayOrder = targetOrder;
-  baseMembers[targetIndex].displayOrder = currentOrder;
+  baseMembers[currentIndex].displayOrder = currentOrder;
+  baseMembers[targetIndex].displayOrder = targetOrder;
 
   syncMembersWithBaseOrder();
   updateTotals();
