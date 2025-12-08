@@ -154,14 +154,18 @@ function startDiscordBot(token) {
       (async () => {
         try {
           const [rows] = await memberPool.query(
-            'SELECT nickname, job, party FROM members ORDER BY id ASC',
+            'SELECT nickname, job, party, display_order FROM members ORDER BY id ASC',
           );
 
           const dmChannel = await message.author.createDM();
 
           const dataLines = rows.map((row) => {
             const partyValue = row.party === null || row.party === undefined ? 'null' : row.party;
-            return `${row.nickname}/${row.job}/${partyValue}`;
+            const displayOrderValue =
+              row.display_order === null || row.display_order === undefined
+                ? 'null'
+                : row.display_order;
+            return `${row.nickname}/${row.job}/${partyValue}/${displayOrderValue}`;
           });
 
           await dmChannel.send({
@@ -169,7 +173,8 @@ function startDiscordBot(token) {
           });
 
           await dmChannel.send({
-            content: '변경할 값을 "닉네임/직업/파티" 형식으로 입력해주세요. (예: 홍길동/비숍/2)',
+            content:
+              '변경할 값을 "닉네임/직업/파티/순번" 형식으로 입력해주세요. (예: 홍길동/비숍/2/1)',
           });
 
           const collector = dmChannel.createMessageCollector({
@@ -182,37 +187,52 @@ function startDiscordBot(token) {
             const input = dmMessage.content.trim();
             const parts = input.split('/');
 
-            if (parts.length !== 3) {
-              await dmChannel.send('형식이 올바르지 않습니다. 닉네임/직업/파티 형식으로 입력해주세요.');
+            if (parts.length !== 4) {
+              await dmChannel.send(
+                '형식이 올바르지 않습니다. 닉네임/직업/파티/순번 형식으로 입력해주세요.',
+              );
               return;
             }
 
-            const [nicknameInput, jobInput, partyInput] = parts.map((part) => part.trim());
+            const [nicknameInput, jobInput, partyInput, displayOrderInput] = parts.map((part) =>
+              part.trim(),
+            );
 
-            if (!nicknameInput || !jobInput || !partyInput) {
-              await dmChannel.send('모든 값을 입력해주세요. (닉네임/직업/파티)');
+            if (!nicknameInput || !jobInput || !partyInput || !displayOrderInput) {
+              await dmChannel.send('모든 값을 입력해주세요. (닉네임/직업/파티/순번)');
               return;
             }
 
             const partyNumber = Number(partyInput);
+            const displayOrderNumber = Number(displayOrderInput);
 
             if (!Number.isInteger(partyNumber) || partyNumber < 1 || partyNumber > 3) {
               await dmChannel.send('파티 값은 1, 2, 3 중 하나의 숫자여야 합니다.');
               return;
             }
 
+            if (!Number.isInteger(displayOrderNumber)) {
+              await dmChannel.send('순번 값은 정수여야 합니다.');
+              return;
+            }
+
             try {
-              const [result] = await memberPool.query('UPDATE members SET party = ? WHERE nickname = ?', [partyNumber, nicknameInput]);
+              const [result] = await memberPool.query(
+                'UPDATE members SET job = ?, party = ?, display_order = ? WHERE nickname = ?',
+                [jobInput, partyNumber, displayOrderNumber, nicknameInput],
+              );
 
               if (result.affectedRows === 0) {
                 await dmChannel.send(`${nicknameInput} 님을 찾을 수 없습니다.`);
                 return;
               }
 
-              await dmChannel.send(`${nicknameInput}님의 party 값이 ${partyNumber}로 수정되었습니다.`);
+              await dmChannel.send(
+                `${nicknameInput}님의 정보가 직업(${jobInput}), 파티(${partyNumber}), 순번(${displayOrderNumber})으로 수정되었습니다.`,
+              );
             } catch (updateError) {
-              console.error('파티 업데이트 실패:', updateError);
-              await dmChannel.send('파티 정보를 업데이트하는 중 오류가 발생했습니다.');
+              console.error('멤버 정보 업데이트 실패:', updateError);
+              await dmChannel.send('멤버 정보를 업데이트하는 중 오류가 발생했습니다.');
             }
           });
 
