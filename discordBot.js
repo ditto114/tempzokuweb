@@ -7,14 +7,44 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
+const mysql = require('mysql2/promise');
 
 const TARGET_GUILD_ID = '1433396128224907326';
+
+const dbConfig = {
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'dito1121!',
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+  database: process.env.DB_NAME || 'raid_distribution',
+};
+
+function createMemberPool() {
+  return mysql.createPool({
+    ...dbConfig,
+    waitForConnections: true,
+    connectionLimit: 5,
+    queueLimit: 0,
+  });
+}
+
+async function fetchMembers(pool) {
+  const [rows] = await pool.query(
+    'SELECT nickname, job FROM members ORDER BY job ASC, nickname ASC',
+  );
+  return rows.map((row) => ({
+    nickname: row.nickname,
+    job: row.job,
+  }));
+}
 
 function startDiscordBot(token) {
   if (!token) {
     console.warn('DISCORD_TOKEN이 설정되지 않아 디스코드 봇이 비활성화되었습니다.');
     return null;
   }
+
+  const memberPool = createMemberPool();
 
   const client = new Client({
     intents: [
@@ -51,6 +81,39 @@ function startDiscordBot(token) {
       message.channel
         .send({ components: [buttonRow] })
         .catch((error) => console.error('디스코드 메시지 전송 실패:', error));
+      return;
+    }
+
+    if (message.content.trim() === '!목록') {
+      fetchMembers(memberPool)
+        .then((members) => {
+          if (!Array.isArray(members) || members.length === 0) {
+            return message.channel.send('등록된 공대원이 없습니다.');
+          }
+
+          const jobColumn = members.map((member) => member.job || '-').join('\n');
+          const nicknameColumn = members
+            .map((member) => member.nickname || '-')
+            .join('\n');
+
+          return message.channel.send({
+            embeds: [
+              {
+                title: '공대원 목록',
+                fields: [
+                  { name: '직업', value: jobColumn, inline: true },
+                  { name: '닉네임', value: nicknameColumn, inline: true },
+                ],
+              },
+            ],
+          });
+        })
+        .catch((error) => {
+          console.error('공대원 목록 조회 실패:', error);
+          message.channel
+            .send('공대원 목록을 불러오는 중 오류가 발생했습니다.')
+            .catch((sendError) => console.error('디스코드 메시지 전송 실패:', sendError));
+        });
       return;
     }
 
