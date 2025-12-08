@@ -123,26 +123,26 @@ function startDiscordBot(token) {
           return message.channel.send({
             embeds: [
               {
-                title: '공대원 목록',
+                title: '카스공대 파티구성',
                 fields: [
-                  { name: '순번 | 닉네임', value: orderNicknameColumn, inline: true },
-                  { name: '\u200B', value: '\u200B', inline: true },
-                  { name: '\u200B', value: '\u200B', inline: true },
                   {
-                    name: '1파티',
+                    name: '1파티(대칭)',
                     value: partyMembers[1].join('\n') || '없음',
                     inline: true,
                   },
                   {
-                    name: '2파티',
+                    name: '2파티(s악마s)',
                     value: partyMembers[2].join('\n') || '없음',
                     inline: true,
                   },
                   {
-                    name: '3파티',
+                    name: '3파티(z천하제일검z)',
                     value: partyMembers[3].join('\n') || '없음',
                     inline: true,
                   },
+                  { name: '입장순번', value: orderNicknameColumn, inline: true },
+                  { name: '리저순번', value: '01 | 너구리코\n02 | 구룻\n03 | 민띠노예용\n04 | 강보\n', inline: true },
+                  { name: '\u200B', value: '\u200B', inline: true },
                 ],
               },
             ],
