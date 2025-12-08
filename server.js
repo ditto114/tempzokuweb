@@ -626,10 +626,10 @@ async function initializeDatabase() {
       PRIMARY KEY (channel_code, name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
-  const [displayOrderColumn] = await connection.query(
+  const [timerDisplayOrderColumn] = await connection.query(
     "SHOW COLUMNS FROM timers LIKE 'display_order'",
   );
-  if (displayOrderColumn.length === 0) {
+  if (timerDisplayOrderColumn.length === 0) {
     await connection.query(
       'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
     );
