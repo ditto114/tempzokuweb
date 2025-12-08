@@ -561,6 +561,29 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.order-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.order-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.order-button {
+  padding: 6px 8px;
+  line-height: 1;
+}
+
+.order-value {
+  min-width: 24px;
+  text-align: center;
+  font-weight: 600;
+}
+
 .modal-footer {
   display: flex;
   justify-content: space-between;
