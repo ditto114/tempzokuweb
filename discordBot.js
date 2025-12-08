@@ -121,6 +121,7 @@ function startDiscordBot(token) {
                 fields: [
                   { name: '순번', value: orderColumn, inline: true },
                   { name: '닉네임', value: nicknameColumn, inline: true },
+                  { name: '\u200B', value: '\u200B', inline: true },
                   {
                     name: '1파티',
                     value: partyMembers[1].join('\n') || '없음',
