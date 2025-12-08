@@ -93,11 +93,17 @@ function startDiscordBot(token) {
             return message.channel.send('등록된 공대원이 없습니다.');
           }
 
-          const orderColumn = members
-            .map((member) => (Number.isInteger(member.displayOrder) ? member.displayOrder : '-'))
-            .join('\n');
-          const nicknameColumn = members
-            .map((member) => member.nickname || '-')
+          const formatOrder = (order) => {
+            if (!Number.isInteger(order)) {
+              return '-';
+            }
+
+            const orderString = String(order);
+            return orderString.length === 1 ? `0${orderString}` : orderString;
+          };
+
+          const orderNicknameColumn = members
+            .map((member) => `${formatOrder(member.displayOrder)} | ${member.nickname || '-'}`)
             .join('\n');
 
           const partyMembers = {
@@ -108,9 +114,9 @@ function startDiscordBot(token) {
 
           members.forEach((member) => {
             if ([1, 2, 3].includes(Number(member.party))) {
-              const nickname = member.nickname || '-';
               const job = member.job || '-';
-              partyMembers[Number(member.party)].push(`${nickname} | ${job}`);
+              const nickname = member.nickname || '-';
+              partyMembers[Number(member.party)].push(`${job} | ${nickname}`);
             }
           });
 
@@ -119,8 +125,8 @@ function startDiscordBot(token) {
               {
                 title: '공대원 목록',
                 fields: [
-                  { name: '순번', value: orderColumn, inline: true },
-                  { name: '닉네임', value: nicknameColumn, inline: true },
+                  { name: '순번 | 닉네임', value: orderNicknameColumn, inline: true },
+                  { name: '\u200B', value: '\u200B', inline: true },
                   { name: '\u200B', value: '\u200B', inline: true },
                   {
                     name: '1파티',
