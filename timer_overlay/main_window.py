@@ -6,8 +6,8 @@ import time
 from typing import Dict
 
 import requests
-from PyQt5.QtCore import QEvent, QTimer, Qt, QPoint
-from PyQt5.QtGui import QColor, QGuiApplication, QKeySequence
+from PyQt5.QtCore import QEvent, QTimer, Qt, QRect
+from PyQt5.QtGui import QColor, QGuiApplication, QImage, QKeySequence
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
 from timer_overlay.config import AppConfig, ConfigStore
 from timer_overlay.key_listener import GlobalKeyListener
 from timer_overlay.network import RemoteTimerState, ServerSettings, TimerService
+from timer_overlay.healthbar_overlay import HealthbarOverlayWidget
 from timer_overlay.overlay_widget import TimerOverlayWidget
 
 logger = logging.getLogger(__name__)
@@ -198,7 +199,10 @@ class MainWindow(QMainWindow):
         self.healthbar_button = QPushButton("체력바")
         self.healthbar_button.setEnabled(False)
         self.healthbar_button.clicked.connect(self._handle_healthbar_clicked)
-        self._healthbar_capture_active = False
+        self._healthbar_overlay: HealthbarOverlayWidget | None = None
+        self._healthbar_timer: QTimer | None = None
+        self._healthbar_region: QRect | None = None
+        self._healthbar_device_ratio: float = 1.0
 
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.status_label)
@@ -330,12 +334,10 @@ class MainWindow(QMainWindow):
         self._apply_server_settings(initial=False, force_prompt=True)
 
     def _handle_healthbar_clicked(self) -> None:
-        if self._healthbar_capture_active:
+        if self._healthbar_timer and self._healthbar_timer.isActive():
+            self._stop_healthbar_tracking()
             return
-        self._healthbar_capture_active = True
-        self.healthbar_button.setEnabled(False)
-        self.setCursor(Qt.CrossCursor)
-        self.grabMouse()
+        self._start_healthbar_tracking()
 
     def _test_connection(self, settings: ServerSettings) -> bool:
         url = f"{settings.base_url}/api/health"
@@ -667,9 +669,11 @@ class MainWindow(QMainWindow):
             "color: #4caf50;" if connected else "color: #ff9800;"
         )
         self.disconnect_button.setEnabled(connected or bool(self.config.channel_code))
-        self.healthbar_button.setEnabled(connected and not self._healthbar_capture_active)
-        if not connected:
-            self._cancel_healthbar_capture()
+        if connected:
+            self.healthbar_button.setEnabled(True)
+        else:
+            self._stop_healthbar_tracking()
+            self.healthbar_button.setEnabled(False)
 
     def _on_overlay_moved(self, timer_id: str, x: int, y: int) -> None:
         self.config.timer_positions[timer_id] = (x, y)
@@ -687,6 +691,7 @@ class MainWindow(QMainWindow):
         self.timer_service.stop()
         self.key_listener.stop()
         self._table_update_timer.stop()
+        self._stop_healthbar_tracking()
         for overlay in self.overlays.values():
             overlay.close()
         super().closeEvent(event)
@@ -704,14 +709,6 @@ class MainWindow(QMainWindow):
         return super().eventFilter(source, event)
 
     def mousePressEvent(self, event):  # type: ignore[override]
-        if (
-            self._healthbar_capture_active
-            and event.button() == Qt.LeftButton
-            and isinstance(event.globalPos(), QPoint)
-        ):
-            position = event.globalPos()
-            self._complete_healthbar_capture(position)
-            return
         return super().mousePressEvent(event)
 
     def _apply_row_style(self, row: int, timer_id: str) -> None:
@@ -722,78 +719,187 @@ class MainWindow(QMainWindow):
             if item is not None:
                 item.setBackground(color)
 
-    def _complete_healthbar_capture(self, position: QPoint) -> None:
-        try:
-            self.releaseMouse()
-            self.unsetCursor()
-            self._healthbar_capture_active = False
-            self._evaluate_healthbar(position)
-        finally:
-            self.healthbar_button.setEnabled(self._connected)
+    def _stop_healthbar_tracking(self) -> None:
+        if self._healthbar_timer is not None:
+            self._healthbar_timer.stop()
+        if self._healthbar_overlay is not None:
+            self._healthbar_overlay.hide()
+        self._healthbar_region = None
+        self.healthbar_button.setText("체력바")
 
-    def _cancel_healthbar_capture(self) -> None:
-        if not self._healthbar_capture_active:
-            return
-        self._healthbar_capture_active = False
-        self.releaseMouse()
-        self.unsetCursor()
-        self.healthbar_button.setEnabled(self._connected)
-
-    def _evaluate_healthbar(self, position: QPoint) -> None:
+    def _start_healthbar_tracking(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             QMessageBox.warning(self, "체력바", "화면 정보를 가져올 수 없습니다.")
             return
 
         screenshot = screen.grabWindow(0)
-        image = screenshot.toImage()
-        device_ratio = screen.devicePixelRatio()
-        x = int(position.x() * device_ratio)
-        y = int(position.y() * device_ratio)
-
-        if x < 0 or y < 0 or x >= image.width() or y >= image.height():
-            QMessageBox.warning(self, "체력바", "선택한 위치가 화면 범위를 벗어났습니다.")
+        self._healthbar_device_ratio = screenshot.devicePixelRatio() or 1.0
+        image = screenshot.toImage().convertToFormat(QImage.Format_RGBA8888)
+        bar_rect = self._locate_healthbar(image)
+        if bar_rect is None:
+            QMessageBox.warning(self, "체력바", "체력바 영역을 찾지 못했습니다.")
             return
 
-        base_color = image.pixelColor(x, y)
-        a, _, right_edge = self._count_same_color(image, x, y, base_color)
-
-        next_x = right_edge + 1
-        if next_x >= image.width():
-            QMessageBox.warning(self, "체력바", "오른쪽에 더 이상 픽셀이 없습니다.")
+        percent = self._calculate_healthbar_percent(image, bar_rect)
+        if percent is None:
+            QMessageBox.warning(self, "체력바", "체력 정보를 계산하지 못했습니다.")
             return
 
-        next_color = image.pixelColor(next_x, y)
-        b = self._count_right(image, next_x, y, next_color)
+        logical_rect = QRect(
+            int(bar_rect.x() / self._healthbar_device_ratio),
+            int(bar_rect.y() / self._healthbar_device_ratio),
+            int(bar_rect.width() / self._healthbar_device_ratio),
+            int(bar_rect.height() / self._healthbar_device_ratio),
+        )
 
-        c = a + b
-        if c == 0:
-            QMessageBox.warning(self, "체력바", "픽셀 정보를 계산할 수 없습니다.")
+        if logical_rect.width() <= 0 or logical_rect.height() <= 0:
+            QMessageBox.warning(self, "체력바", "체력바 크기가 올바르지 않습니다.")
             return
 
-        d = (a / c) * 100
-        QMessageBox.information(self, "체력바", f"{d:.1f}%")
+        if self._healthbar_overlay is None:
+            self._healthbar_overlay = HealthbarOverlayWidget()
+        self._healthbar_overlay.update_overlay(logical_rect, percent)
 
-    def _count_same_color(self, image, x: int, y: int, target_color: QColor) -> tuple[int, int, int]:
+        self._healthbar_region = logical_rect
+        if self._healthbar_timer is None:
+            self._healthbar_timer = QTimer(self)
+            self._healthbar_timer.timeout.connect(self._refresh_healthbar_reading)
+        self._healthbar_timer.setInterval(500)
+        self._healthbar_timer.start()
+        self.healthbar_button.setText("체력바 중지")
+
+    def _refresh_healthbar_reading(self) -> None:
+        if self._healthbar_region is None:
+            return
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self._stop_healthbar_tracking()
+            return
+
+        ratio = self._healthbar_device_ratio or screen.devicePixelRatio() or 1.0
+        region = self._healthbar_region
+        capture = screen.grabWindow(
+            0,
+            int(region.x() * ratio),
+            int(region.y() * ratio),
+            int(region.width() * ratio),
+            int(region.height() * ratio),
+        )
+        image = capture.toImage().convertToFormat(QImage.Format_RGBA8888)
+        percent = self._calculate_healthbar_percent(
+            image, QRect(0, 0, image.width(), image.height())
+        )
+        if percent is None:
+            return
+        if self._healthbar_overlay is not None:
+            self._healthbar_overlay.update_overlay(region, percent)
+
+    def _locate_healthbar(self, image: QImage) -> QRect | None:
         width = image.width()
-        left = x
-        while left - 1 >= 0 and image.pixelColor(left - 1, y) == target_color:
-            left -= 1
+        height = image.height()
+        if width == 0 or height == 0:
+            return None
 
-        right = x
-        while right + 1 < width and image.pixelColor(right + 1, y) == target_color:
-            right += 1
+        min_run = max(160, width // 12)
+        search_height = int(height * 0.6)
+        stride_y = max(1, height // 400)
+        best_run = (0, 0, 0)  # length, start_x, y
 
-        return right - left + 1, left, right
+        for y in range(max(0, height // 20), search_height, stride_y):
+            run_start = None
+            run_length = 0
+            for x in range(0, width, 2):
+                if self._is_bar_pixel(image, x, y):
+                    if run_start is None:
+                        run_start = x
+                        run_length = 2
+                    else:
+                        run_length += 2
+                else:
+                    if run_start is not None and run_length > best_run[0]:
+                        best_run = (run_length, run_start, y)
+                    run_start = None
+                    run_length = 0
+            if run_start is not None and run_length > best_run[0]:
+                best_run = (run_length, run_start, y)
 
-    def _count_right(self, image, x: int, y: int, target_color: QColor) -> int:
-        width = image.width()
-        count = 0
-        position = x
-        while position < width and image.pixelColor(position, y) == target_color:
-            count += 1
-            position += 1
-        return count
+        if best_run[0] < min_run:
+            return None
+
+        _, start_x, base_y = best_run
+        end_x = min(width - 1, start_x + best_run[0])
+
+        def row_ratio(target_y: int) -> float:
+            bar_pixels = 0
+            for x in range(start_x, end_x):
+                if self._is_bar_pixel(image, x, target_y):
+                    bar_pixels += 1
+            return bar_pixels / max(1, end_x - start_x)
+
+        top = base_y
+        while top > 0 and row_ratio(top - 1) > 0.55:
+            top -= 1
+
+        bottom = base_y
+        while bottom + 1 < height and row_ratio(bottom + 1) > 0.55:
+            bottom += 1
+
+        return QRect(start_x, top, end_x - start_x, bottom - top + 1)
+
+    def _calculate_healthbar_percent(self, image: QImage, rect: QRect) -> float | None:
+        if rect.width() <= 0 or rect.height() <= 0:
+            return None
+
+        start_x = max(0, rect.x())
+        start_y = max(0, rect.y())
+        end_x = min(image.width(), rect.x() + rect.width())
+        end_y = min(image.height(), rect.y() + rect.height())
+        if end_x <= start_x or end_y <= start_y:
+            return None
+
+        band_top = start_y + rect.height() // 4
+        band_bottom = start_y + (rect.height() * 3) // 4
+        band_top = max(start_y, band_top)
+        band_bottom = min(end_y, band_bottom)
+
+        filled_columns = 0
+        total_columns = 0
+        for x in range(start_x, end_x):
+            filled_pixels = 0
+            empty_pixels = 0
+            for y in range(band_top, band_bottom):
+                color = image.pixelColor(x, y)
+                if self._is_filled_color(color):
+                    filled_pixels += 1
+                elif self._is_empty_color(color):
+                    empty_pixels += 1
+            if filled_pixels == 0 and empty_pixels == 0:
+                continue
+            total_columns += 1
+            if filled_pixels >= empty_pixels:
+                filled_columns += 1
+
+        if total_columns == 0:
+            return None
+        return (filled_columns / total_columns) * 100
+
+    @staticmethod
+    def _is_filled_color(color: QColor) -> bool:
+        r, g, b = color.red(), color.green(), color.blue()
+        return g >= 150 and g >= r + 20 and g >= b + 20
+
+    @staticmethod
+    def _is_empty_color(color: QColor) -> bool:
+        r, g, b = color.red(), color.green(), color.blue()
+        max_c = max(r, g, b)
+        min_c = min(r, g, b)
+        brightness = (r + g + b) / 3
+        return brightness < 140 and (max_c - min_c) < 35
+
+    def _is_bar_pixel(self, image: QImage, x: int, y: int) -> bool:
+        color = image.pixelColor(x, y)
+        return self._is_filled_color(color) or self._is_empty_color(color)
 
     def _update_row_background(self, timer_id: str) -> None:
         row = self._row_index.get(timer_id)
