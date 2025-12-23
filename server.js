@@ -811,11 +811,16 @@ app.get('/api/members', requireApiAuth, async (req, res) => {
         }
         payload.members.forEach((entry) => {
           const memberId = Number(entry.id);
-          if (entry.paid === true) {
-            return;
-          }
-          const finalAmount = Math.max(0, Number(entry.finalAmount ?? 0));
-          if (!Number.isFinite(finalAmount) || finalAmount === 0) {
+          const finalAmountRaw = Number(entry.finalAmount ?? 0);
+          const finalAmount = Number.isFinite(finalAmountRaw) ? Math.max(0, finalAmountRaw) : 0;
+          const paymentAmountRaw = Number(entry.paymentAmount ?? 0);
+          const paymentAmount = Number.isFinite(paymentAmountRaw) ? Math.max(0, paymentAmountRaw) : 0;
+          const remainingAmountValue = Number(entry.remainingAmount ?? finalAmount - paymentAmount);
+          const remainingAmount = Number.isFinite(remainingAmountValue)
+            ? Math.max(0, remainingAmountValue)
+            : Math.max(0, finalAmount - paymentAmount);
+          const outstandingAmount = entry.paid === true ? 0 : remainingAmount;
+          if (!Number.isFinite(outstandingAmount) || outstandingAmount === 0) {
             return;
           }
           const nickname = typeof entry.nickname === 'string' ? entry.nickname.trim() : '';
@@ -833,7 +838,7 @@ app.get('/api/members', requireApiAuth, async (req, res) => {
 
           targetIds.forEach((id) => {
             const current = outstandingMap.get(id) ?? 0;
-            outstandingMap.set(id, current + finalAmount);
+            outstandingMap.set(id, current + outstandingAmount);
           });
         });
       });
