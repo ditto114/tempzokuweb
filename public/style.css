@@ -333,6 +333,14 @@ button:disabled {
   text-align: center;
 }
 
+.numeric-cell {
+  text-align: right;
+}
+
+.payment-input {
+  text-align: right;
+}
+
 
 #drop-table td:nth-child(2),
 #drop-table td:nth-child(4),

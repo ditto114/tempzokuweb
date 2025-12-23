@@ -976,6 +976,9 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     const deductionCell = document.createElement('td');
     const incentiveCell = document.createElement('td');
     const finalCell = document.createElement('td');
+    const paymentCell = document.createElement('td');
+    const remainingCell = document.createElement('td');
+    remainingCell.classList.add('numeric-cell');
     const paidCell = document.createElement('td');
     paidCell.classList.add('checkbox-cell');
 
@@ -1079,7 +1082,19 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
         incentiveCell.appendChild(incentiveInput);
       }
 
-      finalCell.textContent = formatCurrency(finalAmounts[i] ?? 0);
+      const finalAmount = Math.max(0, Math.floor(finalAmounts[i] ?? 0));
+      finalCell.textContent = formatCurrency(finalAmount);
+
+      const paymentInput = document.createElement('input');
+      paymentInput.type = 'text';
+      paymentInput.inputMode = 'numeric';
+      paymentInput.pattern = '[0-9]*';
+      paymentInput.classList.add('distribution-input', 'payment-input');
+      paymentInput.dataset.alwaysEnabled = 'true';
+      const normalizePaymentValue = (value) => sanitizeNumericInput(String(value ?? ''), 12).replace(/\./g, '');
+      const initialPaymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+      paymentInput.value = normalizePaymentValue(initialPaymentAmount);
+      paymentCell.appendChild(paymentInput);
 
       const paidCheckbox = document.createElement('input');
       paidCheckbox.type = 'checkbox';
@@ -1087,10 +1102,64 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       paidCheckbox.disabled = false;
       paidCheckbox.dataset.alwaysEnabled = 'true';
       paidCheckbox.classList.add('distribution-checkbox');
+
+      function refreshPaymentState({ syncFromMember = false } = {}) {
+        if (syncFromMember) {
+          paymentInput.value = normalizePaymentValue(Math.floor(member.paymentAmount ?? 0));
+        }
+
+        if (member.paid) {
+          if (member.previousPaymentAmount === undefined) {
+            member.previousPaymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
+          }
+          member.paymentAmount = finalAmount;
+          paymentInput.value = normalizePaymentValue(Math.floor(finalAmount));
+          paymentInput.disabled = true;
+        } else {
+          paymentInput.disabled = false;
+          const sanitized = normalizePaymentValue(paymentInput.value);
+          if (paymentInput.value !== sanitized) {
+            paymentInput.value = sanitized;
+          }
+          member.paymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
+        }
+
+        const effectivePayment = member.paid ? finalAmount : Math.min(finalAmount, member.paymentAmount ?? 0);
+        member.paymentAmount = effectivePayment;
+        const remainingAmount = member.paid ? 0 : Math.max(0, finalAmount - effectivePayment);
+        member.remainingAmount = remainingAmount;
+        remainingCell.textContent = formatCurrency(remainingAmount);
+      }
+
+      paymentInput.addEventListener('input', () => {
+        const sanitized = normalizePaymentValue(paymentInput.value);
+        if (paymentInput.value !== sanitized) {
+          paymentInput.value = sanitized;
+        }
+        member.paymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
+        if (member.paid) {
+          member.paid = false;
+          paidCheckbox.checked = false;
+        }
+        member.previousPaymentAmount = member.paymentAmount;
+        refreshPaymentState();
+      });
+
       paidCheckbox.addEventListener('change', () => {
-        member.paid = paidCheckbox.checked;
+        const checked = paidCheckbox.checked;
+        if (checked) {
+          member.previousPaymentAmount = member.paymentAmount ?? 0;
+          member.paid = true;
+        } else {
+          member.paid = false;
+          if (member.previousPaymentAmount !== undefined) {
+            member.paymentAmount = member.previousPaymentAmount;
+          }
+        }
+        refreshPaymentState({ syncFromMember: true });
       });
       paidCell.appendChild(paidCheckbox);
+      refreshPaymentState({ syncFromMember: true });
     } else {
       nicknameCell.textContent = '';
       jobCell.textContent = '';
@@ -1100,6 +1169,8 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       deductionCell.textContent = '';
       incentiveCell.textContent = '';
       finalCell.textContent = '-';
+      paymentCell.textContent = '';
+      remainingCell.textContent = '-';
       paidCell.textContent = '';
     }
 
@@ -1112,6 +1183,8 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     row.appendChild(deductionCell);
     row.appendChild(incentiveCell);
     row.appendChild(finalCell);
+    row.appendChild(paymentCell);
+    row.appendChild(remainingCell);
     row.appendChild(paidCell);
 
     tableBody.appendChild(row);
@@ -1348,15 +1421,17 @@ async function fetchMembers() {
         const previous = previousMembers.get(member.id) || {};
         return {
           ...member,
-          rate: previous.rate ?? 100,
-          deduction: previous.deduction ?? 0,
-          incentive: previous.incentive ?? 0,
-          participating: previous.participating !== undefined
-            ? previous.participating !== false
-            : member.included !== false,
-          paid: previous.paid === true,
-        };
-      });
+        rate: previous.rate ?? 100,
+        deduction: previous.deduction ?? 0,
+        incentive: previous.incentive ?? 0,
+        participating: previous.participating !== undefined
+          ? previous.participating !== false
+          : member.included !== false,
+        paymentAmount: Math.max(0, toNumber(previous.paymentAmount, 0)),
+        remainingAmount: Math.max(0, toNumber(previous.remainingAmount, 0)),
+        paid: previous.paid === true,
+      };
+    });
       if (currentView === 'editor') {
         updateTotals();
       }
@@ -1448,7 +1523,6 @@ function applyReadOnlyState() {
 
   editorPage.querySelectorAll('input, select').forEach((element) => {
     if (element.dataset.alwaysEnabled === 'true') {
-      element.disabled = false;
       return;
     }
     if (element.hasAttribute('data-lockable')) {
@@ -1477,11 +1551,21 @@ function applyReadOnlyState() {
   });
 }
 
+function updateEditModeButton() {
+  const editModeButton = document.getElementById('enter-edit-mode');
+  if (!editModeButton) {
+    return;
+  }
+  const shouldShow = currentView === 'editor' && isReadOnly && currentDistributionId !== null;
+  editModeButton.classList.toggle('hidden', !shouldShow);
+}
+
 function setReadOnly(readOnly) {
   isReadOnly = readOnly;
   applyReadOnlyState();
   applySaleTablesReadOnlyState();
   updateNavState();
+  updateEditModeButton();
 }
 
 function prepareNewDistribution() {
@@ -1494,6 +1578,8 @@ function prepareNewDistribution() {
     deduction: member.deduction ?? 0,
     incentive: member.incentive ?? 0,
     participating: member.included !== false,
+    paymentAmount: 0,
+    remainingAmount: 0,
     paid: false,
   }));
 
@@ -1540,7 +1626,12 @@ function populateFromDistributionData(payload = {}) {
       combined.deduction = member.deduction ?? 0;
       combined.incentive = member.incentive ?? 0;
       combined.participating = member.participating !== false;
+      const savedFinalAmount = Math.max(0, toNumber(member.finalAmount, 0));
+      const savedPaymentAmount = Math.max(0, toNumber(member.paymentAmount, 0));
+      const savedRemainingAmount = Math.max(0, toNumber(member.remainingAmount, savedFinalAmount - savedPaymentAmount));
       combined.paid = member.paid === true;
+      combined.paymentAmount = combined.paid ? savedFinalAmount : savedPaymentAmount;
+      combined.remainingAmount = combined.paid ? 0 : Math.max(0, savedRemainingAmount);
       return combined;
     });
   } else {
@@ -1550,6 +1641,8 @@ function populateFromDistributionData(payload = {}) {
       deduction: member.deduction ?? 0,
       incentive: member.incentive ?? 0,
       participating: member.included !== false,
+      paymentAmount: 0,
+      remainingAmount: 0,
       paid: false,
     }));
   }
@@ -1574,6 +1667,7 @@ function showListView() {
   }
   setPageTitle(currentTitle);
   updateNavState();
+  updateEditModeButton();
 }
 
 function showEditorView(readOnly = false) {
@@ -1589,6 +1683,7 @@ function showEditorView(readOnly = false) {
   setReadOnly(readOnly);
   setPageTitle(currentTitle || generateDefaultTitle());
   updateTotals();
+  updateEditModeButton();
 }
 
 function updateNavState() {
@@ -1652,18 +1747,12 @@ function renderDistributionList(distributions) {
     viewButton.classList.add('secondary');
     viewButton.addEventListener('click', () => openDistribution(distribution.id, true));
 
-    const editButton = document.createElement('button');
-    editButton.textContent = '수정';
-    editButton.classList.add('primary');
-    editButton.addEventListener('click', () => openDistribution(distribution.id, false));
-
     const deleteButton = document.createElement('button');
     deleteButton.textContent = '삭제';
     deleteButton.classList.add('danger');
     deleteButton.addEventListener('click', () => deleteDistribution(distribution.id));
 
     actionCell.appendChild(viewButton);
-    actionCell.appendChild(editButton);
     actionCell.appendChild(deleteButton);
 
     row.appendChild(titleCell);
@@ -1759,13 +1848,21 @@ function collectDistributionPayload() {
       };
     }),
     members: members.map((member, index) => {
-      const { previousRate, ...memberData } = member;
+      const { previousRate, previousPaymentAmount, ...memberData } = member;
+      const finalAmount = Math.max(0, Math.floor(distributionData.finalAmounts[index] ?? 0));
+      const rawPaymentAmount = Math.max(0, toNumber(member.paymentAmount, 0));
+      const paymentAmount = member.paid ? finalAmount : Math.min(finalAmount, rawPaymentAmount);
+      const remainingAmount = member.paid ? 0 : Math.max(0, finalAmount - paymentAmount);
+      member.paymentAmount = paymentAmount;
+      member.remainingAmount = remainingAmount;
       return {
         ...memberData,
         included: member.included !== false,
         participating: member.participating !== false,
         paid: member.paid === true,
-        finalAmount: distributionData.finalAmounts[index] ?? 0,
+        finalAmount,
+        paymentAmount,
+        remainingAmount,
       };
     }),
     totals: {
@@ -1909,6 +2006,8 @@ function initMemberControls() {
         rate: 100,
         deduction: 0,
         incentive: 0,
+        paymentAmount: 0,
+        remainingAmount: 0,
         paid: false,
       });
       updateTotals();
@@ -1959,10 +2058,18 @@ function initMemberControls() {
   const openSaveModalButton = document.getElementById('open-save-modal');
   if (openSaveModalButton) {
     openSaveModalButton.addEventListener('click', () => {
-      if (isReadOnly) {
+      handleSaveDistribution();
+    });
+  }
+
+  const enterEditModeButton = document.getElementById('enter-edit-mode');
+  if (enterEditModeButton) {
+    enterEditModeButton.addEventListener('click', () => {
+      if (!isReadOnly) {
         return;
       }
-      handleSaveDistribution();
+      setReadOnly(false);
+      updateTotals();
     });
   }
 
