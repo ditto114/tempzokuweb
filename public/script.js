@@ -28,9 +28,10 @@ let useBaseMembersForEditor = true;
 let expenses = [];
 
 const DEFAULT_EXPENSE_ROWS = 2;
-const managedModalIds = ['member-modal', 'expense-modal'];
+const managedModalIds = ['member-modal', 'expense-modal', 'payment-input-modal'];
 
 let saveFeedbackTimeout = null;
+let paymentModalMemberIndex = null;
 
 const LOGIN_PAGE_PATH = '/login.html';
 
@@ -733,6 +734,49 @@ function closeExpenseModal() {
   updateBackdropVisibility();
 }
 
+function openPaymentInputModal(memberIndex) {
+  const modal = document.getElementById('payment-input-modal');
+  const input = document.getElementById('payment-input-value');
+  if (!modal || !input) {
+    return;
+  }
+  paymentModalMemberIndex = memberIndex;
+  input.value = '';
+  modal.classList.remove('hidden');
+  updateBackdropVisibility();
+  input.focus();
+}
+
+function closePaymentInputModal() {
+  const modal = document.getElementById('payment-input-modal');
+  if (!modal) {
+    return;
+  }
+  paymentModalMemberIndex = null;
+  modal.classList.add('hidden');
+  updateBackdropVisibility();
+}
+
+function handlePaymentInputConfirm() {
+  const modal = document.getElementById('payment-input-modal');
+  const input = document.getElementById('payment-input-value');
+  if (!modal || !input) {
+    return;
+  }
+  if (paymentModalMemberIndex === null || paymentModalMemberIndex < 0 || paymentModalMemberIndex >= members.length) {
+    closePaymentInputModal();
+    return;
+  }
+  const increment = Math.max(0, Math.floor(toNumber(input.value, 0)));
+  if (increment > 0) {
+    const member = members[paymentModalMemberIndex];
+    const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+    member.paymentAmount = currentPayment + increment;
+  }
+  closePaymentInputModal();
+  updateTotals();
+}
+
 function addExpenseRow() {
   expenses.push(normalizeExpenseRow());
   renderExpenseRows();
@@ -1085,16 +1129,11 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       const finalAmount = Math.max(0, Math.floor(finalAmounts[i] ?? 0));
       finalCell.textContent = formatCurrency(finalAmount);
 
-      const paymentInput = document.createElement('input');
-      paymentInput.type = 'text';
-      paymentInput.inputMode = 'numeric';
-      paymentInput.pattern = '[0-9]*';
-      paymentInput.classList.add('distribution-input', 'payment-input');
-      paymentInput.dataset.alwaysEnabled = 'true';
-      const normalizePaymentValue = (value) => sanitizeNumericInput(String(value ?? ''), 12).replace(/\./g, '');
-      const initialPaymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
-      paymentInput.value = normalizePaymentValue(initialPaymentAmount);
-      paymentCell.appendChild(paymentInput);
+      const paymentValueElement = document.createElement('span');
+      const paymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+      member.paymentAmount = paymentAmount;
+      paymentValueElement.classList.add('payment-value');
+      paymentCell.appendChild(paymentValueElement);
 
       const paidCheckbox = document.createElement('input');
       paidCheckbox.type = 'checkbox';
@@ -1103,63 +1142,64 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       paidCheckbox.dataset.alwaysEnabled = 'true';
       paidCheckbox.classList.add('distribution-checkbox');
 
-      function refreshPaymentState({ syncFromMember = false } = {}) {
-        if (syncFromMember) {
-          paymentInput.value = normalizePaymentValue(Math.floor(member.paymentAmount ?? 0));
-        }
+      const remainingValueElement = document.createElement('span');
+      remainingCell.appendChild(remainingValueElement);
+
+      function updatePaymentAndRemainingDisplay() {
+        const safePayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+        member.paymentAmount = safePayment;
+        const calculatedRemaining = Math.floor(finalAmount - safePayment);
+        member.remainingAmount = calculatedRemaining;
 
         if (member.paid) {
-          if (member.previousPaymentAmount === undefined) {
-            member.previousPaymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
-          }
-          member.paymentAmount = finalAmount;
-          paymentInput.value = normalizePaymentValue(Math.floor(finalAmount));
-          paymentInput.disabled = true;
-        } else {
-          paymentInput.disabled = false;
-          const sanitized = normalizePaymentValue(paymentInput.value);
-          if (paymentInput.value !== sanitized) {
-            paymentInput.value = sanitized;
-          }
-          member.paymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
+          paymentValueElement.textContent = '-';
+          remainingValueElement.textContent = '-';
+          return;
         }
 
-        const effectivePayment = member.paid ? finalAmount : Math.min(finalAmount, member.paymentAmount ?? 0);
-        member.paymentAmount = effectivePayment;
-        const remainingAmount = member.paid ? 0 : Math.max(0, finalAmount - effectivePayment);
-        member.remainingAmount = remainingAmount;
-        remainingCell.textContent = formatCurrency(remainingAmount);
+        paymentValueElement.textContent = formatCurrency(safePayment);
+        remainingValueElement.textContent = formatCurrency(calculatedRemaining);
       }
 
-      paymentInput.addEventListener('input', () => {
-        const sanitized = normalizePaymentValue(paymentInput.value);
-        if (paymentInput.value !== sanitized) {
-          paymentInput.value = sanitized;
+      const controlsWrapper = document.createElement('div');
+      controlsWrapper.classList.add('payment-controls');
+      controlsWrapper.appendChild(paidCheckbox);
+
+      const quickAddButton = document.createElement('button');
+      quickAddButton.type = 'button';
+      quickAddButton.textContent = '499';
+      quickAddButton.classList.add('mini-button', 'secondary');
+      quickAddButton.dataset.lockable = 'true';
+      quickAddButton.addEventListener('click', () => {
+        if (isReadOnly) {
+          return;
         }
-        member.paymentAmount = Math.max(0, toNumber(paymentInput.value, 0));
-        if (member.paid) {
-          member.paid = false;
-          paidCheckbox.checked = false;
+        const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+        member.paymentAmount = currentPayment + 5_000_000;
+        updatePaymentAndRemainingDisplay();
+      });
+
+      const manualButton = document.createElement('button');
+      manualButton.type = 'button';
+      manualButton.textContent = '직접입력';
+      manualButton.classList.add('mini-button', 'secondary');
+      manualButton.dataset.lockable = 'true';
+      manualButton.addEventListener('click', () => {
+        if (isReadOnly) {
+          return;
         }
-        member.previousPaymentAmount = member.paymentAmount;
-        refreshPaymentState();
+        openPaymentInputModal(i);
       });
 
       paidCheckbox.addEventListener('change', () => {
-        const checked = paidCheckbox.checked;
-        if (checked) {
-          member.previousPaymentAmount = member.paymentAmount ?? 0;
-          member.paid = true;
-        } else {
-          member.paid = false;
-          if (member.previousPaymentAmount !== undefined) {
-            member.paymentAmount = member.previousPaymentAmount;
-          }
-        }
-        refreshPaymentState({ syncFromMember: true });
+        member.paid = paidCheckbox.checked;
+        updatePaymentAndRemainingDisplay();
       });
-      paidCell.appendChild(paidCheckbox);
-      refreshPaymentState({ syncFromMember: true });
+
+      controlsWrapper.appendChild(quickAddButton);
+      controlsWrapper.appendChild(manualButton);
+      paidCell.appendChild(controlsWrapper);
+      updatePaymentAndRemainingDisplay();
     } else {
       nicknameCell.textContent = '';
       jobCell.textContent = '';
@@ -1628,10 +1668,10 @@ function populateFromDistributionData(payload = {}) {
       combined.participating = member.participating !== false;
       const savedFinalAmount = Math.max(0, toNumber(member.finalAmount, 0));
       const savedPaymentAmount = Math.max(0, toNumber(member.paymentAmount, 0));
-      const savedRemainingAmount = Math.max(0, toNumber(member.remainingAmount, savedFinalAmount - savedPaymentAmount));
+      const savedRemainingAmount = toNumber(member.remainingAmount, savedFinalAmount - savedPaymentAmount);
       combined.paid = member.paid === true;
-      combined.paymentAmount = combined.paid ? savedFinalAmount : savedPaymentAmount;
-      combined.remainingAmount = combined.paid ? 0 : Math.max(0, savedRemainingAmount);
+      combined.paymentAmount = savedPaymentAmount;
+      combined.remainingAmount = savedRemainingAmount;
       return combined;
     });
   } else {
@@ -1850,9 +1890,9 @@ function collectDistributionPayload() {
     members: members.map((member, index) => {
       const { previousRate, previousPaymentAmount, ...memberData } = member;
       const finalAmount = Math.max(0, Math.floor(distributionData.finalAmounts[index] ?? 0));
-      const rawPaymentAmount = Math.max(0, toNumber(member.paymentAmount, 0));
-      const paymentAmount = member.paid ? finalAmount : Math.min(finalAmount, rawPaymentAmount);
-      const remainingAmount = member.paid ? 0 : Math.max(0, finalAmount - paymentAmount);
+      const rawPaymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+      const paymentAmount = rawPaymentAmount;
+      const remainingAmount = Math.floor(finalAmount - paymentAmount);
       member.paymentAmount = paymentAmount;
       member.remainingAmount = remainingAmount;
       return {
@@ -2062,6 +2102,24 @@ function initMemberControls() {
     });
   }
 
+  const confirmPaymentInputButton = document.getElementById('confirm-payment-input');
+  if (confirmPaymentInputButton) {
+    confirmPaymentInputButton.addEventListener('click', () => {
+      if (isReadOnly) {
+        closePaymentInputModal();
+        return;
+      }
+      handlePaymentInputConfirm();
+    });
+  }
+
+  const cancelPaymentInputButton = document.getElementById('cancel-payment-input');
+  if (cancelPaymentInputButton) {
+    cancelPaymentInputButton.addEventListener('click', () => {
+      closePaymentInputModal();
+    });
+  }
+
   const enterEditModeButton = document.getElementById('enter-edit-mode');
   if (enterEditModeButton) {
     enterEditModeButton.addEventListener('click', () => {
@@ -2078,6 +2136,7 @@ function initMemberControls() {
     backdrop.addEventListener('click', () => {
       closeMemberModal();
       closeExpenseModal();
+      closePaymentInputModal();
     });
   }
 }
