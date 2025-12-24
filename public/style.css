@@ -351,6 +351,10 @@ button:disabled {
 
 #distribution-table td.checkbox-cell {
   text-align: center;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 #distribution-table .distribution-checkbox {
@@ -362,23 +366,26 @@ button:disabled {
   cursor: pointer;
 }
 
-#distribution-table td.checkbox-cell .distribution-checkbox {
-  margin: 0 auto;
-}
-
 #distribution-table tbody tr {
   position: relative;
   overflow: visible;
 }
 
+#distribution-table td.payment-cell {
+  position: relative;
+}
+
+#distribution-table .payment-controls {
+  display: inline-flex;
+  align-items: center;
+}
+
 .payment-controls-floating {
   position: absolute;
-  right: -120px;
+  left: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 0;
 }
 
 #distribution-table.hide-action-column th.action-column,
