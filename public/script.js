@@ -767,11 +767,11 @@ function handlePaymentInputConfirm() {
     closePaymentInputModal();
     return;
   }
-  const increment = Math.max(0, Math.floor(toNumber(input.value, 0)));
-  if (increment > 0) {
+  const increment = Math.floor(toNumber(input.value, 0));
+  if (increment !== 0) {
     const member = members[paymentModalMemberIndex];
     const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
-    member.paymentAmount = currentPayment + increment;
+    member.paymentAmount = Math.max(0, currentPayment + increment);
   }
   closePaymentInputModal();
   updateTotals();
@@ -1162,18 +1162,14 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       }
 
       const controlsWrapper = document.createElement('div');
-      controlsWrapper.classList.add('payment-controls');
+      controlsWrapper.classList.add('payment-controls', 'payment-controls-floating');
       controlsWrapper.appendChild(paidCheckbox);
 
       const quickAddButton = document.createElement('button');
       quickAddButton.type = 'button';
       quickAddButton.textContent = '499';
       quickAddButton.classList.add('mini-button', 'secondary');
-      quickAddButton.dataset.lockable = 'true';
       quickAddButton.addEventListener('click', () => {
-        if (isReadOnly) {
-          return;
-        }
         const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
         member.paymentAmount = currentPayment + 5_000_000;
         updatePaymentAndRemainingDisplay();
@@ -1183,11 +1179,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       manualButton.type = 'button';
       manualButton.textContent = '직접입력';
       manualButton.classList.add('mini-button', 'secondary');
-      manualButton.dataset.lockable = 'true';
       manualButton.addEventListener('click', () => {
-        if (isReadOnly) {
-          return;
-        }
         openPaymentInputModal(i);
       });
 
