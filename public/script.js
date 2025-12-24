@@ -32,6 +32,7 @@ const managedModalIds = ['member-modal', 'expense-modal', 'payment-input-modal']
 
 let saveFeedbackTimeout = null;
 let paymentModalMemberIndex = null;
+let selectedPaymentMemberIndex = null;
 
 const LOGIN_PAGE_PATH = '/login.html';
 
@@ -777,6 +778,69 @@ function handlePaymentInputConfirm() {
   updateTotals();
 }
 
+function refreshPaymentShortcutTarget() {
+  const targetLabel = document.getElementById('payment-shortcut-target');
+  const rows = document.querySelectorAll('#distribution-table tbody tr');
+  const hasValidSelection = Number.isInteger(selectedPaymentMemberIndex)
+    && selectedPaymentMemberIndex >= 0
+    && selectedPaymentMemberIndex < members.length;
+
+  rows.forEach((row, index) => {
+    row.classList.toggle('payment-target-row', hasValidSelection && index === selectedPaymentMemberIndex);
+  });
+
+  if (!targetLabel) {
+    return;
+  }
+
+  if (!hasValidSelection) {
+    selectedPaymentMemberIndex = null;
+    targetLabel.textContent = '대상 행을 선택해주세요';
+    return;
+  }
+
+  const member = members[selectedPaymentMemberIndex];
+  const nickname = member.nickname || '이름 없음';
+  const job = member.job ? ` (${member.job})` : '';
+  targetLabel.textContent = `${nickname}${job}`;
+}
+
+function setPaymentShortcutTarget(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= members.length) {
+    selectedPaymentMemberIndex = null;
+    refreshPaymentShortcutTarget();
+    return;
+  }
+
+  selectedPaymentMemberIndex = index;
+  refreshPaymentShortcutTarget();
+}
+
+function applyPaymentIncrement(amount) {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return;
+  }
+
+  if (!Number.isInteger(selectedPaymentMemberIndex) || selectedPaymentMemberIndex < 0 || selectedPaymentMemberIndex >= members.length) {
+    alert('지급 대상 행을 선택해주세요.');
+    return;
+  }
+
+  const member = members[selectedPaymentMemberIndex];
+  const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+  member.paymentAmount = currentPayment + amount;
+  updateTotals();
+}
+
+function openManualPaymentInput() {
+  if (!Number.isInteger(selectedPaymentMemberIndex) || selectedPaymentMemberIndex < 0 || selectedPaymentMemberIndex >= members.length) {
+    alert('지급 대상 행을 선택해주세요.');
+    return;
+  }
+
+  openPaymentInputModal(selectedPaymentMemberIndex);
+}
+
 function addExpenseRow() {
   expenses.push(normalizeExpenseRow());
   renderExpenseRows();
@@ -1163,43 +1227,19 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
       const controlsWrapper = document.createElement('div');
       controlsWrapper.classList.add('payment-controls');
-      controlsWrapper.appendChild(paidCheckbox);
-
-      const quickAddButton = document.createElement('button');
-      quickAddButton.type = 'button';
-      quickAddButton.textContent = '499';
-      quickAddButton.classList.add('mini-button', 'secondary');
-      quickAddButton.dataset.lockable = 'true';
-      quickAddButton.addEventListener('click', () => {
-        if (isReadOnly) {
-          return;
-        }
-        const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
-        member.paymentAmount = currentPayment + 5_000_000;
-        updatePaymentAndRemainingDisplay();
-      });
-
-      const manualButton = document.createElement('button');
-      manualButton.type = 'button';
-      manualButton.textContent = '직접입력';
-      manualButton.classList.add('mini-button', 'secondary');
-      manualButton.dataset.lockable = 'true';
-      manualButton.addEventListener('click', () => {
-        if (isReadOnly) {
-          return;
-        }
-        openPaymentInputModal(i);
-      });
 
       paidCheckbox.addEventListener('change', () => {
         member.paid = paidCheckbox.checked;
         updatePaymentAndRemainingDisplay();
       });
 
-      controlsWrapper.appendChild(quickAddButton);
-      controlsWrapper.appendChild(manualButton);
+      controlsWrapper.appendChild(paidCheckbox);
       paidCell.appendChild(controlsWrapper);
       updatePaymentAndRemainingDisplay();
+
+      row.addEventListener('click', () => {
+        setPaymentShortcutTarget(i);
+      });
     } else {
       nicknameCell.textContent = '';
       jobCell.textContent = '';
@@ -1230,6 +1270,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     tableBody.appendChild(row);
   }
 
+  refreshPaymentShortcutTarget();
   applyReadOnlyState();
 }
 
@@ -2105,10 +2146,6 @@ function initMemberControls() {
   const confirmPaymentInputButton = document.getElementById('confirm-payment-input');
   if (confirmPaymentInputButton) {
     confirmPaymentInputButton.addEventListener('click', () => {
-      if (isReadOnly) {
-        closePaymentInputModal();
-        return;
-      }
       handlePaymentInputConfirm();
     });
   }
@@ -2137,6 +2174,20 @@ function initMemberControls() {
       closeMemberModal();
       closeExpenseModal();
       closePaymentInputModal();
+    });
+  }
+
+  const paymentQuickButton = document.getElementById('payment-quick-499');
+  if (paymentQuickButton) {
+    paymentQuickButton.addEventListener('click', () => {
+      applyPaymentIncrement(5_000_000);
+    });
+  }
+
+  const paymentManualButton = document.getElementById('payment-open-manual');
+  if (paymentManualButton) {
+    paymentManualButton.addEventListener('click', () => {
+      openManualPaymentInput();
     });
   }
 }

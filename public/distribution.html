@@ -86,44 +86,55 @@
           </section>
         </div>
 
-        <section class="card">
-          <div class="card-header">
-            <h2>분배표</h2>
-            <div class="card-actions">
-              <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true" data-hide-when-readonly="true">용병 추가</button>
-              <button id="open-expense-modal" class="secondary mini-button" data-hide-when-readonly="true">지출비용 관리</button>
+        <div class="distribution-layout">
+          <section class="card distribution-card">
+            <div class="card-header">
+              <h2>분배표</h2>
+              <div class="card-actions">
+                <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true" data-hide-when-readonly="true">용병 추가</button>
+                <button id="open-expense-modal" class="secondary mini-button" data-hide-when-readonly="true">지출비용 관리</button>
+              </div>
+            </div>
+
+            <div class="totals">
+              <div class="totals-row">분배인원: <span id="member-count">0 + 0</span></div>
+              <div class="totals-row">총 수익: <span id="total-net">0</span></div>
+              <div class="totals-row">총 인센티브: <span id="total-incentive">0</span></div>
+              <div class="totals-row">총 지출비용: <span id="total-expense">0</span></div>
+              <div class="totals-row">총 분배금: <span id="total-distribution">0</span></div>
+            </div>
+
+            <table id="distribution-table">
+              <thead>
+                <tr>
+                  <th class="action-column"></th>
+                  <th>닉네임</th>
+                  <th>직업</th>
+                  <th>분배인원</th>
+                  <th>분배금</th>
+                  <th>분배율</th>
+                  <th>차감금(만)</th>
+                  <th>인센티브(만)</th>
+                  <th>최종 분배금</th>
+                  <th>지급액</th>
+                  <th>남은금액</th>
+                  <th>지급여부</th>
+                </tr>
+              </thead>
+              <tbody>
+              </tbody>
+              </table>
+          </section>
+
+          <div class="payment-shortcuts" aria-live="polite">
+            <div class="payment-shortcuts__title">지급 단축</div>
+            <p id="payment-shortcut-target" class="payment-shortcuts__target">대상 행을 선택해주세요</p>
+            <div class="payment-shortcuts__actions">
+              <button id="payment-quick-499" class="secondary mini-button" data-always-enabled="true">499</button>
+              <button id="payment-open-manual" class="secondary mini-button" data-always-enabled="true">직접입력</button>
             </div>
           </div>
-
-          <div class="totals">
-            <div class="totals-row">분배인원: <span id="member-count">0 + 0</span></div>
-            <div class="totals-row">총 수익: <span id="total-net">0</span></div>
-            <div class="totals-row">총 인센티브: <span id="total-incentive">0</span></div>
-            <div class="totals-row">총 지출비용: <span id="total-expense">0</span></div>
-            <div class="totals-row">총 분배금: <span id="total-distribution">0</span></div>
-          </div>
-
-          <table id="distribution-table">
-            <thead>
-              <tr>
-                <th class="action-column"></th>
-                <th>닉네임</th>
-                <th>직업</th>
-                <th>분배인원</th>
-                <th>분배금</th>
-                <th>분배율</th>
-                <th>차감금(만)</th>
-                <th>인센티브(만)</th>
-                <th>최종 분배금</th>
-                <th>지급액</th>
-                <th>남은금액</th>
-                <th>지급여부</th>
-              </tr>
-            </thead>
-            <tbody>
-            </tbody>
-            </table>
-        </section>
+        </div>
 
         <div class="save-actions">
           <button id="enter-edit-mode" class="secondary hidden">수정</button>

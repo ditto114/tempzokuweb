@@ -85,6 +85,17 @@ h2 {
   gap: 24px;
 }
 
+.distribution-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 16px;
+  align-items: start;
+}
+
+.distribution-card {
+  margin-bottom: 0;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -402,6 +413,39 @@ button:disabled {
 .save-status {
   color: var(--success);
   font-size: 14px;
+}
+
+.payment-shortcuts {
+  background: transparent;
+  padding: 16px;
+  border-radius: 12px;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.payment-shortcuts__title {
+  font-weight: 700;
+  color: var(--secondary);
+}
+
+.payment-shortcuts__target {
+  margin: 0;
+  color: var(--text);
+  min-height: 24px;
+}
+
+.payment-shortcuts__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.payment-target-row {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background-color: rgba(74, 108, 247, 0.06);
 }
 
 .modal-backdrop {
@@ -1310,6 +1354,16 @@ button:disabled {
 
   .timer-actions {
     flex-direction: column;
+  }
+
+  .distribution-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-shortcuts {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   }
 }
 
