@@ -770,8 +770,8 @@ function handlePaymentInputConfirm() {
   const increment = Math.floor(toNumber(input.value, 0));
   if (increment !== 0) {
     const member = members[paymentModalMemberIndex];
-    const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
-    member.paymentAmount = Math.max(0, currentPayment + increment);
+    const currentPayment = Math.floor(toNumber(member.paymentAmount, 0));
+    member.paymentAmount = currentPayment + increment;
   }
   closePaymentInputModal();
   updateTotals();
@@ -1130,7 +1130,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       finalCell.textContent = formatCurrency(finalAmount);
 
       const paymentValueElement = document.createElement('span');
-      const paymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+      const paymentAmount = Math.floor(toNumber(member.paymentAmount, 0));
       member.paymentAmount = paymentAmount;
       paymentValueElement.classList.add('payment-value');
       paymentCell.appendChild(paymentValueElement);
@@ -1146,7 +1146,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       remainingCell.appendChild(remainingValueElement);
 
       function updatePaymentAndRemainingDisplay() {
-        const safePayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+        const safePayment = Math.floor(toNumber(member.paymentAmount, 0));
         member.paymentAmount = safePayment;
         const calculatedRemaining = Math.floor(finalAmount - safePayment);
         member.remainingAmount = calculatedRemaining;
@@ -1169,7 +1169,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       quickAddButton.textContent = '499';
       quickAddButton.classList.add('mini-button', 'secondary', 'payment-button');
       quickAddButton.addEventListener('click', () => {
-        const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+        const currentPayment = Math.floor(toNumber(member.paymentAmount, 0));
         member.paymentAmount = currentPayment + 5_000_000;
         updatePaymentAndRemainingDisplay();
       });
@@ -1453,17 +1453,17 @@ async function fetchMembers() {
         const previous = previousMembers.get(member.id) || {};
         return {
           ...member,
-        rate: previous.rate ?? 100,
-        deduction: previous.deduction ?? 0,
-        incentive: previous.incentive ?? 0,
-        participating: previous.participating !== undefined
-          ? previous.participating !== false
-          : member.included !== false,
-        paymentAmount: Math.max(0, toNumber(previous.paymentAmount, 0)),
-        remainingAmount: Math.max(0, toNumber(previous.remainingAmount, 0)),
-        paid: previous.paid === true,
-      };
-    });
+          rate: previous.rate ?? 100,
+          deduction: previous.deduction ?? 0,
+          incentive: previous.incentive ?? 0,
+          participating: previous.participating !== undefined
+            ? previous.participating !== false
+            : member.included !== false,
+          paymentAmount: Math.floor(toNumber(previous.paymentAmount, 0)),
+          remainingAmount: Math.floor(toNumber(previous.remainingAmount, 0)),
+          paid: previous.paid === true,
+        };
+      });
       if (currentView === 'editor') {
         updateTotals();
       }
@@ -1659,8 +1659,10 @@ function populateFromDistributionData(payload = {}) {
       combined.incentive = member.incentive ?? 0;
       combined.participating = member.participating !== false;
       const savedFinalAmount = Math.max(0, toNumber(member.finalAmount, 0));
-      const savedPaymentAmount = Math.max(0, toNumber(member.paymentAmount, 0));
-      const savedRemainingAmount = toNumber(member.remainingAmount, savedFinalAmount - savedPaymentAmount);
+      const savedPaymentAmount = Math.floor(toNumber(member.paymentAmount, 0));
+      const savedRemainingAmount = Math.floor(
+        toNumber(member.remainingAmount, savedFinalAmount - savedPaymentAmount),
+      );
       combined.paid = member.paid === true;
       combined.paymentAmount = savedPaymentAmount;
       combined.remainingAmount = savedRemainingAmount;
@@ -1882,7 +1884,7 @@ function collectDistributionPayload() {
     members: members.map((member, index) => {
       const { previousRate, previousPaymentAmount, ...memberData } = member;
       const finalAmount = Math.max(0, Math.floor(distributionData.finalAmounts[index] ?? 0));
-      const rawPaymentAmount = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
+      const rawPaymentAmount = Math.floor(toNumber(member.paymentAmount, 0));
       const paymentAmount = rawPaymentAmount;
       const remainingAmount = Math.floor(finalAmount - paymentAmount);
       member.paymentAmount = paymentAmount;
