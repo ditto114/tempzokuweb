@@ -366,6 +366,21 @@ button:disabled {
   margin: 0 auto;
 }
 
+#distribution-table tbody tr {
+  position: relative;
+  overflow: visible;
+}
+
+.payment-controls-floating {
+  position: absolute;
+  right: -120px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 #distribution-table.hide-action-column th.action-column,
 #distribution-table.hide-action-column td.action-column {
   display: none;
