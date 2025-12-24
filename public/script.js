@@ -1024,7 +1024,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
     const remainingCell = document.createElement('td');
     remainingCell.classList.add('numeric-cell');
     const paidCell = document.createElement('td');
-    paidCell.classList.add('checkbox-cell');
+    paidCell.classList.add('checkbox-cell', 'payment-cell');
 
     if (i < memberCount) {
       const member = members[i];
@@ -1163,12 +1163,11 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
       const controlsWrapper = document.createElement('div');
       controlsWrapper.classList.add('payment-controls', 'payment-controls-floating');
-      controlsWrapper.appendChild(paidCheckbox);
 
       const quickAddButton = document.createElement('button');
       quickAddButton.type = 'button';
       quickAddButton.textContent = '499';
-      quickAddButton.classList.add('mini-button', 'secondary');
+      quickAddButton.classList.add('mini-button', 'secondary', 'payment-button');
       quickAddButton.addEventListener('click', () => {
         const currentPayment = Math.max(0, Math.floor(toNumber(member.paymentAmount, 0)));
         member.paymentAmount = currentPayment + 5_000_000;
@@ -1178,7 +1177,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       const manualButton = document.createElement('button');
       manualButton.type = 'button';
       manualButton.textContent = '직접입력';
-      manualButton.classList.add('mini-button', 'secondary');
+      manualButton.classList.add('mini-button', 'secondary', 'payment-button');
       manualButton.addEventListener('click', () => {
         openPaymentInputModal(i);
       });
@@ -1188,6 +1187,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
         updatePaymentAndRemainingDisplay();
       });
 
+      paidCell.appendChild(paidCheckbox);
       controlsWrapper.appendChild(quickAddButton);
       controlsWrapper.appendChild(manualButton);
       paidCell.appendChild(controlsWrapper);
@@ -2097,10 +2097,6 @@ function initMemberControls() {
   const confirmPaymentInputButton = document.getElementById('confirm-payment-input');
   if (confirmPaymentInputButton) {
     confirmPaymentInputButton.addEventListener('click', () => {
-      if (isReadOnly) {
-        closePaymentInputModal();
-        return;
-      }
       handlePaymentInputConfirm();
     });
   }
