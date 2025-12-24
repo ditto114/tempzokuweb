@@ -814,11 +814,11 @@ app.get('/api/members', requireApiAuth, async (req, res) => {
           const finalAmountRaw = Number(entry.finalAmount ?? 0);
           const finalAmount = Number.isFinite(finalAmountRaw) ? Math.max(0, finalAmountRaw) : 0;
           const paymentAmountRaw = Number(entry.paymentAmount ?? 0);
-          const paymentAmount = Number.isFinite(paymentAmountRaw) ? Math.max(0, paymentAmountRaw) : 0;
+          const paymentAmount = Number.isFinite(paymentAmountRaw) ? Math.floor(paymentAmountRaw) : 0;
           const remainingAmountValue = Number(entry.remainingAmount ?? finalAmount - paymentAmount);
           const remainingAmount = Number.isFinite(remainingAmountValue)
-            ? Math.max(0, remainingAmountValue)
-            : Math.max(0, finalAmount - paymentAmount);
+            ? Math.max(0, Math.floor(remainingAmountValue))
+            : Math.max(0, Math.floor(finalAmount - paymentAmount));
           const outstandingAmount = entry.paid === true ? 0 : remainingAmount;
           if (!Number.isFinite(outstandingAmount) || outstandingAmount === 0) {
             return;
