@@ -3,9 +3,18 @@ const express = require('express');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
+const http = require('http');
+const { Server } = require('socket.io');
 const { startDiscordBot } = require('./discordBot');
+const { registerYutSocket } = require('./yut/socket');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+  },
+});
 const PORT = process.env.PORT || 47984;
 
 const dbConfig = {
@@ -695,6 +704,7 @@ async function initializeDatabase() {
 }
 
 app.use(express.json());
+registerYutSocket(io);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
@@ -1538,7 +1548,7 @@ startDiscordBot(process.env.DISCORD_TOKEN);
 
 initializeDatabase()
   .then(() => {
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
   })
