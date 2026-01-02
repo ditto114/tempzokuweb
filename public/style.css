@@ -1676,6 +1676,23 @@ button:disabled {
   resize: vertical;
 }
 
+.recruit-guide {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recruit-guide-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.recruit-guide-actions .recruit-copy-status {
+  margin: 0;
+}
+
 .drag-hint {
   margin: 12px 0 4px;
   color: var(--secondary);
