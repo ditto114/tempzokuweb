@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>카스공대 구인글</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="recruit-body">
+  <div class="container recruit-container">
+    <nav class="top-nav recruit-nav">
+      <a href="/" class="secondary">메인으로</a>
+    </nav>
+
+    <header class="recruit-header">
+      <h1>구인글 생성기</h1>
+      <p class="recruit-subtitle">종료 시간과 각 포지션 정보를 입력하고, 원하는 형식으로 바로 복사하세요.</p>
+    </header>
+
+    <main class="dual-layout recruit-main">
+      <section class="card recruit-card">
+        <div class="card-header">
+          <div>
+            <h2>구인글 설정</h2>
+            <p class="card-subtitle">제목과 종료 시간을 입력하고 포지션 정보를 채워주세요.</p>
+          </div>
+        </div>
+
+        <div class="recruit-base-grid">
+          <label class="input-group">
+            <span class="input-label">제목</span>
+            <input id="recruit-title" type="text" maxlength="30" placeholder="예) 망용둥 5인" />
+          </label>
+          <div class="recruit-time-inputs">
+            <span class="input-label">종료 시간</span>
+            <div class="time-fields">
+              <input id="recruit-hour" type="number" min="0" max="23" step="1" aria-label="종료 시" />
+              <span class="time-separator">:</span>
+              <input id="recruit-minute" type="number" min="0" max="59" step="1" aria-label="종료 분" />
+            </div>
+          </div>
+        </div>
+
+        <div class="recruit-position-grid">
+          <article class="recruit-position-card">
+            <div class="recruit-position-header">
+              <div>
+                <p class="position-label">옥상</p>
+                <p class="position-note">지원금이 함께 표시됩니다.</p>
+              </div>
+              <label class="recruit-toggle">
+                <input type="checkbox" data-field-path="positions.roof.filled" />
+                <span>구인 완료</span>
+              </label>
+            </div>
+            <div class="recruit-field-grid">
+              <label>
+                <span class="input-label">레벨</span>
+                <input type="number" min="0" step="1" data-field-path="positions.roof.level" />
+              </label>
+              <label>
+                <span class="input-label">직업</span>
+                <input type="text" maxlength="10" data-field-path="positions.roof.job" />
+              </label>
+              <label class="full-row">
+                <span class="input-label">지원금</span>
+                <input type="number" min="0" step="10" data-field-path="positions.roof.price" />
+              </label>
+            </div>
+          </article>
+
+          <article class="recruit-position-card">
+            <div class="recruit-position-header">
+              <div>
+                <p class="position-label">2층</p>
+                <p class="position-note">가격만 표시됩니다.</p>
+              </div>
+              <label class="recruit-toggle">
+                <input type="checkbox" data-field-path="positions.second.filled" />
+                <span>구인 완료</span>
+              </label>
+            </div>
+            <div class="recruit-field-grid">
+              <label>
+                <span class="input-label">레벨</span>
+                <input type="number" min="0" step="1" data-field-path="positions.second.level" />
+              </label>
+              <label>
+                <span class="input-label">직업</span>
+                <input type="text" maxlength="10" data-field-path="positions.second.job" />
+              </label>
+              <label class="full-row">
+                <span class="input-label">가격</span>
+                <input type="number" min="0" step="10" data-field-path="positions.second.price" />
+              </label>
+            </div>
+          </article>
+
+          <article class="recruit-position-card">
+            <div class="recruit-position-header">
+              <div>
+                <p class="position-label">경심/띱숍</p>
+                <p class="position-note">가격을 두 개까지 입력할 수 있습니다.</p>
+              </div>
+              <label class="recruit-toggle">
+                <input type="checkbox" data-field-path="positions.center.filled" />
+                <span>구인 완료</span>
+              </label>
+            </div>
+            <div class="recruit-field-grid">
+              <label>
+                <span class="input-label">레벨</span>
+                <input type="number" min="0" step="1" data-field-path="positions.center.level" />
+              </label>
+              <label>
+                <span class="input-label">직업</span>
+                <input type="text" maxlength="10" data-field-path="positions.center.job" />
+              </label>
+              <label>
+                <span class="input-label">가격1</span>
+                <input type="number" min="0" step="10" data-field-path="positions.center.price" />
+              </label>
+              <label>
+                <span class="input-label">가격2</span>
+                <input type="number" min="0" step="10" data-field-path="positions.center.price2" />
+              </label>
+            </div>
+          </article>
+
+          <article class="recruit-position-card">
+            <div class="recruit-position-header">
+              <div>
+                <p class="position-label">좌1</p>
+                <p class="position-note">가격만 표시됩니다.</p>
+              </div>
+              <label class="recruit-toggle">
+                <input type="checkbox" data-field-path="positions.left.filled" />
+                <span>구인 완료</span>
+              </label>
+            </div>
+            <div class="recruit-field-grid">
+              <label>
+                <span class="input-label">레벨</span>
+                <input type="number" min="0" step="1" data-field-path="positions.left.level" />
+              </label>
+              <label>
+                <span class="input-label">직업</span>
+                <input type="text" maxlength="10" data-field-path="positions.left.job" />
+              </label>
+              <label class="full-row">
+                <span class="input-label">가격</span>
+                <input type="number" min="0" step="10" data-field-path="positions.left.price" />
+              </label>
+            </div>
+          </article>
+
+          <article class="recruit-position-card">
+            <div class="recruit-position-header">
+              <div>
+                <p class="position-label">우1</p>
+                <p class="position-note">가격만 표시됩니다.</p>
+              </div>
+              <label class="recruit-toggle">
+                <input type="checkbox" data-field-path="positions.right.filled" />
+                <span>구인 완료</span>
+              </label>
+            </div>
+            <div class="recruit-field-grid">
+              <label>
+                <span class="input-label">레벨</span>
+                <input type="number" min="0" step="1" data-field-path="positions.right.level" />
+              </label>
+              <label>
+                <span class="input-label">직업</span>
+                <input type="text" maxlength="10" data-field-path="positions.right.job" />
+              </label>
+              <label class="full-row">
+                <span class="input-label">가격</span>
+                <input type="number" min="0" step="10" data-field-path="positions.right.price" />
+              </label>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="card recruit-card">
+        <div class="card-header">
+          <div>
+            <h2>완성된 구인글</h2>
+            <p class="card-subtitle">숫자를 위아래로 드래그해 빠르게 수정하고 복사하세요.</p>
+          </div>
+          <div class="card-actions">
+            <button type="button" class="tertiary" id="recruit-reset">기본값 불러오기</button>
+            <button type="button" class="primary" id="recruit-copy">복사</button>
+          </div>
+        </div>
+
+        <div class="recruit-preview" id="recruit-preview" aria-live="polite"></div>
+        <p class="drag-hint">미리보기의 숫자(시, 분, 레벨, 가격)를 드래그하면 위/아래 방향에 따라 값이 1 또는 10 단위로 증감합니다.</p>
+
+        <label class="input-group">
+          <span class="input-label">텍스트 형태</span>
+          <textarea id="recruit-plain-output" class="recruit-output" rows="6" readonly aria-label="완성된 구인글 텍스트"></textarea>
+        </label>
+        <p class="recruit-copy-status" id="recruit-copy-status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </div>
+
+  <script src="recruit.js"></script>
+</body>
+</html>

@@ -1366,6 +1366,7 @@ button:disabled {
 .landing-actions {
   display: grid;
   gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .landing-link {
@@ -1391,14 +1392,24 @@ button:disabled {
   box-shadow: 0 12px 30px rgba(74, 108, 247, 0.4);
 }
 
-.landing-link:nth-child(2) {
+.landing-link.timer-link {
   background-color: #1abc9c;
   box-shadow: 0 8px 20px rgba(26, 188, 156, 0.3);
 }
 
-.landing-link:nth-child(2):hover,
-.landing-link:nth-child(2):focus {
+.landing-link.timer-link:hover,
+.landing-link.timer-link:focus {
   box-shadow: 0 12px 30px rgba(26, 188, 156, 0.4);
+}
+
+.landing-link.recruit-link {
+  background-color: #9b59b6;
+  box-shadow: 0 8px 20px rgba(155, 89, 182, 0.28);
+}
+
+.landing-link.recruit-link:hover,
+.landing-link.recruit-link:focus {
+  box-shadow: 0 12px 30px rgba(155, 89, 182, 0.4);
 }
 
 .auth-body {
@@ -1479,6 +1490,187 @@ button:disabled {
 .auth-back-link:hover,
 .auth-back-link:focus {
   text-decoration: underline;
+}
+
+.recruit-body {
+  background: linear-gradient(135deg, #f0f4ff 0%, #fdf2f8 100%);
+}
+
+.recruit-container {
+  max-width: 1280px;
+}
+
+.recruit-header {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.recruit-subtitle {
+  color: var(--secondary);
+  margin: 0;
+}
+
+.recruit-main {
+  align-items: start;
+}
+
+.recruit-card .card-subtitle {
+  margin: 4px 0 0;
+  color: var(--secondary);
+}
+
+.recruit-base-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-bottom: 12px;
+}
+
+.recruit-time-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.time-fields {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.time-separator {
+  font-weight: 700;
+}
+
+.recruit-position-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.recruit-position-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 14px 16px;
+  background: #f9fafb;
+}
+
+.recruit-position-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.position-label {
+  margin: 0;
+  font-weight: 700;
+}
+
+.position-note {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  color: var(--secondary);
+}
+
+.recruit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  color: var(--secondary);
+  white-space: nowrap;
+}
+
+.recruit-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.recruit-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recruit-field-grid .full-row {
+  grid-column: 1 / -1;
+}
+
+.recruit-preview {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  white-space: pre-wrap;
+  font-family: 'Noto Sans KR', 'Pretendard', 'Spoqa Han Sans Neo', monospace;
+  min-height: 120px;
+  line-height: 1.7;
+  border: 1px solid #1e293b;
+}
+
+.recruit-output {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-family: 'Noto Sans KR', 'Pretendard', 'Spoqa Han Sans Neo', sans-serif;
+  resize: vertical;
+}
+
+.drag-hint {
+  margin: 12px 0 4px;
+  color: var(--secondary);
+  font-size: 0.95rem;
+}
+
+.drag-number {
+  cursor: ns-resize;
+  border-bottom: 1px dashed #cbd5e1;
+  padding: 0 2px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.drag-number:hover,
+.drag-number:focus {
+  background-color: #1e293b;
+  color: #f8fafc;
+}
+
+.drag-number-active {
+  background-color: #334155;
+  color: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+.recruit-copy-status {
+  margin: 6px 0 0;
+  color: #16a34a;
+  min-height: 20px;
+}
+
+.recruit-copy-status.error {
+  color: #e02424;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-weight: 600;
+  color: #374151;
+}
+
+@media (max-width: 1024px) {
+  .recruit-main {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 600px) {
