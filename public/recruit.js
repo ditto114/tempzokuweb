@@ -2,6 +2,7 @@ const DEFAULT_STATE = Object.freeze({
   title: '망용둥 5인',
   endHour: 5,
   endMinute: 58,
+  showEndTime: true,
   positions: {
     roof: { name: '옥상', level: 189, job: '보마', price: 150, filled: true },
     second: { name: '2층', level: 0, job: '', price: 150, filled: false },
@@ -13,20 +14,28 @@ const DEFAULT_STATE = Object.freeze({
 
 const DRAG_PIXEL_STEP = 8;
 const JOB_OPTIONS = ['보마', '렌져', '신궁', '저격', '나로', '허밋', '섀도', '시프', '닼나', '용', '혀로', '프리', '숍'];
+const LOCAL_STORAGE_KEY = 'recruit-state';
+const DATA_FILE_NAME = 'recruit-data.json';
+const PERSIST_DELAY = 220;
 
 const elements = {
   titleInput: document.getElementById('recruit-title'),
   hourInput: document.getElementById('recruit-hour'),
   minuteInput: document.getElementById('recruit-minute'),
+  showTimeInput: document.getElementById('recruit-show-time'),
   preview: document.getElementById('recruit-preview'),
   plainOutput: document.getElementById('recruit-plain-output'),
   copyButton: document.getElementById('recruit-copy'),
   resetButton: document.getElementById('recruit-reset'),
   copyStatus: document.getElementById('recruit-copy-status'),
+  connectStorageButton: document.getElementById('recruit-connect-storage'),
+  storageStatus: document.getElementById('recruit-storage-status'),
 };
 
 let state = cloneState(DEFAULT_STATE);
 let activeDrag = null;
+let isHydrating = true;
+let persistTimer = null;
 const jobRouletteState = {
   overlay: null,
   wheel: null,
@@ -35,9 +44,96 @@ const jobRouletteState = {
   center: { x: 0, y: 0 },
   activeIndex: -1,
 };
+const storageState = {
+  fileHandle: null,
+  saveQueue: Promise.resolve(),
+};
 
 function cloneState(source) {
   return JSON.parse(JSON.stringify(source));
+}
+
+function mergePositionState(target, incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  Object.keys(target).forEach((key) => {
+    if (incoming[key] && typeof incoming[key] === 'object') {
+      Object.assign(target[key], incoming[key]);
+    }
+  });
+}
+
+function applyLoadedState(nextState) {
+  if (!nextState || typeof nextState !== 'object') return;
+  const merged = cloneState(DEFAULT_STATE);
+  merged.title = nextState.title ?? merged.title;
+  merged.endHour = Number.isFinite(nextState.endHour) ? nextState.endHour : merged.endHour;
+  merged.endMinute = Number.isFinite(nextState.endMinute) ? nextState.endMinute : merged.endMinute;
+  merged.showEndTime = nextState.showEndTime ?? merged.showEndTime;
+  mergePositionState(merged.positions, nextState.positions);
+  state = merged;
+}
+
+function loadStateFromLocalStorage() {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!saved) return null;
+    return JSON.parse(saved);
+  } catch (error) {
+    console.error('로컬 스토리지 로드 실패', error);
+    return null;
+  }
+}
+
+function saveStateToLocalStorage(snapshot) {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (error) {
+    console.error('로컬 스토리지 저장 실패', error);
+  }
+}
+
+function openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('recruit-file-store', 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore('handles');
+    };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function getStoredFileHandle() {
+  if (!('indexedDB' in window)) return null;
+  try {
+    const db = await openHandleDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readonly');
+      const store = tx.objectStore('handles');
+      const request = store.get('data-file');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error('파일 핸들 로드 실패', error);
+    return null;
+  }
+}
+
+async function storeFileHandle(handle) {
+  if (!('indexedDB' in window)) return;
+  try {
+    const db = await openHandleDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readwrite');
+      const store = tx.objectStore('handles');
+      const request = store.put(handle, 'data-file');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error('파일 핸들 저장 실패', error);
+  }
 }
 
 function escapeHtml(value) {
@@ -86,6 +182,7 @@ function setValueByPath(path, rawValue) {
 function normalizeState() {
   state.endHour = clampNumber(Math.round(Number(state.endHour) || 0), 0, 23);
   state.endMinute = clampNumber(Math.round(Number(state.endMinute) || 0), 0, 59);
+  state.showEndTime = Boolean(state.showEndTime);
 
   Object.keys(state.positions).forEach((key) => {
     const position = state.positions[key];
@@ -190,7 +287,12 @@ function formatHeader(useHtml) {
   const minute = useHtml
     ? wrapNumber(state.endMinute, { binding: 'endMinute', step: 1, min: 0, max: 59, pad: true })
     : padTime(state.endMinute);
-  return `🐣 ${displayText(state.title, useHtml)} ${hour}:${minute}종료 🐣`;
+  const parts = [`🐣 ${displayText(state.title, useHtml)}`];
+  if (state.showEndTime) {
+    parts.push(`${hour}:${minute}종료`);
+  }
+  parts.push('🐣');
+  return parts.join(' ');
 }
 
 function buildFormatted(useHtml = false) {
@@ -221,6 +323,10 @@ function render(options = {}) {
   if (!options.silent) {
     clearCopyStatus();
   }
+
+  if (!options.skipPersist && !isHydrating) {
+    schedulePersist();
+  }
 }
 
 function updateInputs() {
@@ -232,6 +338,9 @@ function updateInputs() {
   }
   if (elements.minuteInput) {
     elements.minuteInput.value = state.endMinute ?? 0;
+  }
+  if (elements.showTimeInput) {
+    elements.showTimeInput.checked = Boolean(state.showEndTime);
   }
 
   document.querySelectorAll('[data-field-path]').forEach((input) => {
@@ -272,6 +381,8 @@ function handleBaseInput(event) {
     state.endHour = Number(value) || 0;
   } else if (id === 'recruit-minute') {
     state.endMinute = Number(value) || 0;
+  } else if (id === 'recruit-show-time') {
+    state.showEndTime = Boolean(event.target.checked);
   }
   render();
 }
@@ -477,6 +588,149 @@ function clearCopyStatus() {
   }
 }
 
+function setStorageStatus(message, isError = false) {
+  if (!elements.storageStatus || !message) return;
+  elements.storageStatus.textContent = message;
+  elements.storageStatus.classList.toggle('error', Boolean(isError));
+}
+
+function clearStorageStatus() {
+  if (elements.storageStatus) {
+    elements.storageStatus.textContent = '';
+    elements.storageStatus.classList.remove('error');
+  }
+}
+
+function schedulePersist() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+  }
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persistState();
+  }, PERSIST_DELAY);
+}
+
+async function ensureFilePermission(handle, requestWrite = false) {
+  if (!handle?.queryPermission) return false;
+  const options = { mode: 'readwrite' };
+  let permission = await handle.queryPermission(options);
+  if (permission === 'granted') return true;
+  if (!requestWrite) return false;
+  permission = await handle.requestPermission(options);
+  return permission === 'granted';
+}
+
+async function writeStateToFile(handle, snapshot) {
+  try {
+    const allowed = await ensureFilePermission(handle, true);
+    if (!allowed) {
+      setStorageStatus('데이터 파일 저장 권한을 허용해주세요.', true);
+      return;
+    }
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(snapshot, null, 2));
+    await writable.close();
+    setStorageStatus(`${DATA_FILE_NAME}에 저장했습니다.`);
+  } catch (error) {
+    console.error('파일 저장 실패', error);
+    setStorageStatus('데이터 파일 저장 중 오류가 발생했습니다.', true);
+  }
+}
+
+async function persistState() {
+  const snapshot = cloneState(state);
+  saveStateToLocalStorage(snapshot);
+  if (storageState.fileHandle) {
+    storageState.saveQueue = storageState.saveQueue
+      .catch(() => {})
+      .then(() => writeStateToFile(storageState.fileHandle, snapshot));
+  }
+}
+
+async function readStateFromFile(handle) {
+  try {
+    const allowed = await ensureFilePermission(handle, true);
+    if (!allowed) {
+      setStorageStatus('데이터 파일 읽기 권한을 허용해주세요.', true);
+      return null;
+    }
+    const file = await handle.getFile();
+    const text = await file.text();
+    const parsed = JSON.parse(text || '{}');
+    setStorageStatus(`${DATA_FILE_NAME}에서 불러왔습니다.`);
+    return parsed;
+  } catch (error) {
+    console.error('파일 읽기 실패', error);
+    setStorageStatus('데이터 파일을 읽을 수 없습니다. JSON 형식을 확인해주세요.', true);
+    return null;
+  }
+}
+
+async function promptForDataFile() {
+  if (!('showSaveFilePicker' in window) && !('showOpenFilePicker' in window)) {
+    setStorageStatus('브라우저가 파일 저장을 지원하지 않아 JSON 파일을 사용할 수 없습니다.', true);
+    return null;
+  }
+
+  try {
+    if ('showSaveFilePicker' in window) {
+      return await window.showSaveFilePicker({
+        suggestedName: DATA_FILE_NAME,
+        types: [{ description: 'JSON 파일', accept: { 'application/json': ['.json'] } }],
+      });
+    }
+    const [handle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: [{ description: 'JSON 파일', accept: { 'application/json': ['.json'] } }],
+    });
+    return handle;
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      console.error('파일 선택 실패', error);
+      setStorageStatus('데이터 파일을 선택하지 못했습니다.', true);
+    } else {
+      setStorageStatus('파일 선택이 취소되었습니다.', true);
+    }
+    return null;
+  }
+}
+
+async function connectSavedFileHandle() {
+  const savedHandle = await getStoredFileHandle();
+  if (!savedHandle) return;
+  const allowed = await ensureFilePermission(savedHandle, false);
+  if (!allowed) return;
+  storageState.fileHandle = savedHandle;
+  const loaded = await readStateFromFile(savedHandle);
+  if (loaded) {
+    applyLoadedState(loaded);
+    render({ skipPersist: true, silent: true });
+  }
+}
+
+async function handleConnectStorage() {
+  clearStorageStatus();
+  const handle = await promptForDataFile();
+  if (!handle) return;
+  const allowed = await ensureFilePermission(handle, true);
+  if (!allowed) {
+    setStorageStatus('파일 접근 권한이 없어 저장할 수 없습니다.', true);
+    return;
+  }
+
+  storageState.fileHandle = handle;
+  await storeFileHandle(handle);
+  const loaded = await readStateFromFile(handle);
+  if (loaded) {
+    applyLoadedState(loaded);
+    render({ skipPersist: true, silent: true });
+  } else {
+    setStorageStatus(`${DATA_FILE_NAME} 파일을 새로 생성합니다.`);
+  }
+  schedulePersist();
+}
+
 function resetState() {
   state = cloneState(DEFAULT_STATE);
   render();
@@ -516,6 +770,18 @@ function handlePreviewMouseDown(event) {
   }
 }
 
+async function hydrateState() {
+  const savedLocal = loadStateFromLocalStorage();
+  if (savedLocal) {
+    applyLoadedState(savedLocal);
+  }
+  await connectSavedFileHandle();
+  if (!storageState.fileHandle) {
+    setStorageStatus('JSON 파일과 연결하면 동일 폴더에 자동 저장됩니다.');
+  }
+  isHydrating = false;
+}
+
 function attachEvents() {
   document.querySelectorAll('[data-field-path]').forEach((input) => {
     input.addEventListener('input', handleInputChange);
@@ -531,7 +797,13 @@ function attachEvents() {
 
   elements.copyButton?.addEventListener('click', copyToClipboard);
   elements.resetButton?.addEventListener('click', resetState);
+  elements.showTimeInput?.addEventListener('change', handleBaseInput);
+  elements.connectStorageButton?.addEventListener('click', handleConnectStorage);
 }
 
 attachEvents();
-render();
+hydrateState().finally(() => {
+  render({ skipPersist: true });
+  isHydrating = false;
+  schedulePersist();
+});
