@@ -1646,6 +1646,118 @@ button:disabled {
   border-color: #94a3b8;
 }
 
+.status-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  border-radius: 9999px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid #1f2937;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.status-toggle:hover,
+.status-toggle:focus {
+  background-color: #1e293b;
+  border-color: #334155;
+  transform: translateY(-1px);
+}
+
+.job-text {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  margin: 0 2px;
+  border-radius: 8px;
+  border-bottom: 1px dashed #475569;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.job-text:hover,
+.job-text:focus {
+  background-color: #1e293b;
+  color: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.job-text-empty {
+  color: #cbd5e1;
+  font-style: italic;
+}
+
+.job-text-empty::after {
+  content: attr(data-placeholder);
+  color: #cbd5e1;
+  font-style: italic;
+}
+
+.job-roulette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+  z-index: 20;
+}
+
+.job-roulette.active {
+  display: block;
+}
+
+.job-roulette-wheel {
+  position: absolute;
+  width: 240px;
+  height: 240px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #1f2937;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.6);
+}
+
+.job-roulette-wheel::after {
+  content: '직업을 드래그 후 놓아 선택';
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  bottom: 14px;
+  left: 0;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.job-roulette-option {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #111827;
+  color: #e2e8f0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid #1f2937;
+  min-width: 48px;
+  text-align: center;
+  font-size: 0.9rem;
+  pointer-events: none;
+  opacity: 0.8;
+  transition: transform 0.12s ease, background-color 0.12s ease, opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.job-roulette-option.active {
+  background: #0ea5e9;
+  color: #0b1224;
+  border-color: #7dd3fc;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.05);
+}
+
 .recruit-copy-status {
   margin: 6px 0 0;
   color: #16a34a;
