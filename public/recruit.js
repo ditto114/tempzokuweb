@@ -3,6 +3,7 @@ const DEFAULT_STATE = Object.freeze({
   endHour: 5,
   endMinute: 58,
   showEndTime: true,
+  guideMessage: '',
   positions: {
     roof: { name: '옥상', level: 189, job: '보마', price: 150, filled: true },
     second: { name: '2층', level: 0, job: '', price: 150, filled: false },
@@ -25,9 +26,12 @@ const elements = {
   showTimeInput: document.getElementById('recruit-show-time'),
   preview: document.getElementById('recruit-preview'),
   plainOutput: document.getElementById('recruit-plain-output'),
+  guideInput: document.getElementById('recruit-guide-text'),
   copyButton: document.getElementById('recruit-copy'),
+  guideCopyButton: document.getElementById('recruit-guide-copy'),
   resetButton: document.getElementById('recruit-reset'),
   copyStatus: document.getElementById('recruit-copy-status'),
+  guideCopyStatus: document.getElementById('recruit-guide-copy-status'),
   connectStorageButton: document.getElementById('recruit-connect-storage'),
   storageStatus: document.getElementById('recruit-storage-status'),
 };
@@ -69,6 +73,8 @@ function applyLoadedState(nextState) {
   merged.endHour = Number.isFinite(nextState.endHour) ? nextState.endHour : merged.endHour;
   merged.endMinute = Number.isFinite(nextState.endMinute) ? nextState.endMinute : merged.endMinute;
   merged.showEndTime = nextState.showEndTime ?? merged.showEndTime;
+  merged.guideMessage =
+    typeof nextState.guideMessage === 'string' ? nextState.guideMessage : merged.guideMessage;
   mergePositionState(merged.positions, nextState.positions);
   state = merged;
 }
@@ -183,6 +189,7 @@ function normalizeState() {
   state.endHour = clampNumber(Math.round(Number(state.endHour) || 0), 0, 23);
   state.endMinute = clampNumber(Math.round(Number(state.endMinute) || 0), 0, 59);
   state.showEndTime = Boolean(state.showEndTime);
+  state.guideMessage = String(state.guideMessage ?? '');
 
   Object.keys(state.positions).forEach((key) => {
     const position = state.positions[key];
@@ -239,6 +246,9 @@ function formatSupportPosition(position, bindingKey, useHtml) {
     const level = useHtml
       ? wrapNumber(position.level, { binding: `positions.${bindingKey}.level`, step: 1, min: 0 })
       : position.level;
+    if (bindingKey === 'roof') {
+      return `${prefix}${position.name}: ${level}${job}`;
+    }
     return `${prefix}${position.name}: ${level}${job}(${priceText})`;
   }
   return `${prefix}${position.name}: 구인중(${priceText})`;
@@ -322,6 +332,7 @@ function render(options = {}) {
 
   if (!options.silent) {
     clearCopyStatus();
+    clearGuideCopyStatus();
   }
 
   if (!options.skipPersist && !isHydrating) {
@@ -542,37 +553,58 @@ function handleJobRouletteEnd() {
 }
 
 function copyToClipboard() {
-  const text = elements.plainOutput?.value || '';
-  if (!text) {
-    setCopyStatus('복사할 내용이 없습니다.', true);
-    return;
-  }
-  if (navigator?.clipboard?.writeText) {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => setCopyStatus('복사 완료!'))
-      .catch(() => fallbackCopy(text));
-    return;
-  }
-  fallbackCopy(text);
+  copyText({
+    text: elements.plainOutput?.value || '',
+    onSuccess: () => setCopyStatus('복사 완료!'),
+    onEmpty: () => setCopyStatus('복사할 내용이 없습니다.', true),
+    onFailure: () => setCopyStatus('복사에 실패했습니다. 직접 복사해주세요.', true),
+  });
 }
 
-function fallbackCopy(text) {
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'absolute';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    document.execCommand('copy');
-    setCopyStatus('복사 완료!');
-  } catch (error) {
-    setCopyStatus('복사에 실패했습니다. 직접 복사해주세요.', true);
-  } finally {
-    textarea.remove();
+function copyGuideToClipboard() {
+  copyText({
+    text: elements.guideInput?.value || '',
+    onSuccess: () => setGuideCopyStatus('안내멘트를 복사했습니다.'),
+    onEmpty: () => setGuideCopyStatus('복사할 안내멘트가 없습니다.', true),
+    onFailure: () => setGuideCopyStatus('복사에 실패했습니다. 직접 복사해주세요.', true),
+  });
+}
+
+function copyText({ text, onSuccess, onEmpty, onFailure }) {
+  const content = text ?? '';
+  if (!content.trim()) {
+    onEmpty?.();
+    return;
   }
+
+  const fallbackCopy = () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = content;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    let success = false;
+    try {
+      success = document.execCommand('copy');
+    } catch (error) {
+      success = false;
+    } finally {
+      textarea.remove();
+    }
+    if (success) {
+      onSuccess?.();
+    } else {
+      onFailure?.();
+    }
+  };
+
+  if (navigator?.clipboard?.writeText) {
+    navigator.clipboard.writeText(content).then(onSuccess).catch(fallbackCopy);
+    return;
+  }
+  fallbackCopy();
 }
 
 function setCopyStatus(message, isError = false) {
@@ -581,10 +613,23 @@ function setCopyStatus(message, isError = false) {
   elements.copyStatus.classList.toggle('error', Boolean(isError));
 }
 
+function setGuideCopyStatus(message, isError = false) {
+  if (!elements.guideCopyStatus) return;
+  elements.guideCopyStatus.textContent = message;
+  elements.guideCopyStatus.classList.toggle('error', Boolean(isError));
+}
+
 function clearCopyStatus() {
   if (elements.copyStatus) {
     elements.copyStatus.textContent = '';
     elements.copyStatus.classList.remove('error');
+  }
+}
+
+function clearGuideCopyStatus() {
+  if (elements.guideCopyStatus) {
+    elements.guideCopyStatus.textContent = '';
+    elements.guideCopyStatus.classList.remove('error');
   }
 }
 
@@ -796,6 +841,7 @@ function attachEvents() {
   elements.preview?.addEventListener('click', handlePreviewClick);
 
   elements.copyButton?.addEventListener('click', copyToClipboard);
+  elements.guideCopyButton?.addEventListener('click', copyGuideToClipboard);
   elements.resetButton?.addEventListener('click', resetState);
   elements.showTimeInput?.addEventListener('change', handleBaseInput);
   elements.connectStorageButton?.addEventListener('click', handleConnectStorage);
