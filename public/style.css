@@ -1526,10 +1526,66 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.storage-card {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  margin-bottom: 10px;
+}
+
+.storage-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.storage-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.storage-subtitle {
+  margin: 4px 0 0;
+  color: var(--secondary);
+  font-size: 0.95rem;
+}
+
+.storage-status {
+  margin: 8px 0 0;
+  min-height: 20px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.storage-status.error {
+  color: #b91c1c;
+}
+
+.storage-helper {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
 .recruit-time-inputs {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.inline-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.inline-checkbox input {
+  width: 18px;
+  height: 18px;
 }
 
 .time-fields {

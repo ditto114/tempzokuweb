@@ -9,7 +9,7 @@
 <body class="recruit-body">
   <div class="container recruit-container">
     <nav class="top-nav recruit-nav">
-      <a href="/" class="secondary">메인으로</a>
+      <a href="index.html" class="secondary">메인으로</a>
     </nav>
 
     <header class="recruit-header">
@@ -38,7 +38,23 @@
               <span class="time-separator">:</span>
               <input id="recruit-minute" type="number" min="0" max="59" step="1" aria-label="종료 분" />
             </div>
+            <label class="inline-checkbox">
+              <input id="recruit-show-time" type="checkbox" checked />
+              <span>시간 표시</span>
+            </label>
           </div>
+        </div>
+
+        <div class="storage-card">
+          <div class="storage-card-header">
+            <div>
+              <p class="storage-title">데이터 저장</p>
+              <p class="storage-subtitle">동일 폴더의 <strong>recruit-data.json</strong>에 자동 저장해 새로고침/종료 후에도 계속 이어서 수정합니다.</p>
+            </div>
+            <button type="button" class="tertiary" id="recruit-connect-storage">데이터 파일 선택/생성</button>
+          </div>
+          <p class="storage-status" id="recruit-storage-status" role="status" aria-live="polite"></p>
+          <p class="storage-helper">브라우저 권한 허용 후, 현재 HTML 파일과 같은 폴더의 JSON 파일을 선택하거나 새로 만들면 변경 사항이 자동으로 기록됩니다.</p>
         </div>
 
         <div class="recruit-position-grid">
