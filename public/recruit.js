@@ -12,6 +12,7 @@ const DEFAULT_STATE = Object.freeze({
 });
 
 const DRAG_PIXEL_STEP = 8;
+const JOB_OPTIONS = ['보마', '렌져', '신궁', '저격', '나로', '허밋', '섀도', '시프', '닼나', '용', '혀로', '프리', '숍'];
 
 const elements = {
   titleInput: document.getElementById('recruit-title'),
@@ -26,6 +27,14 @@ const elements = {
 
 let state = cloneState(DEFAULT_STATE);
 let activeDrag = null;
+const jobRouletteState = {
+  overlay: null,
+  wheel: null,
+  options: [],
+  binding: null,
+  center: { x: 0, y: 0 },
+  activeIndex: -1,
+};
 
 function cloneState(source) {
   return JSON.parse(JSON.stringify(source));
@@ -98,24 +107,48 @@ function wrapNumber(value, { binding, step, min, max, pad = false }) {
   return `<span class="drag-number" data-binding="${binding}" data-step="${step}"${minAttr}${maxAttr}>${escapeHtml(displayValue)}</span>`;
 }
 
+function formatStatusIndicator(position, bindingKey, useHtml) {
+  const emoji = position.filled ? '🟢' : '🔴';
+  if (!useHtml) {
+    return emoji;
+  }
+  const binding = `positions.${bindingKey}.filled`;
+  return `<span class="status-toggle" role="button" aria-pressed="${position.filled}" data-binding="${binding}" title="클릭해 구인 여부 전환">${emoji}</span>`;
+}
+
+function formatJobText(position, bindingKey, useHtml) {
+  const text = position.job ?? '';
+  if (!useHtml) {
+    return displayText(text, useHtml);
+  }
+  const classes = ['job-text'];
+  if (!text) {
+    classes.push('job-text-empty');
+  }
+  const safeText = escapeHtml(text || '\u200b');
+  const binding = `positions.${bindingKey}.job`;
+  return `<span class="${classes.join(' ')}" data-job-binding="${binding}" data-placeholder="직업 선택" title="직업을 길게 눌러 변경">${safeText}</span>`;
+}
+
 function formatSupportPosition(position, bindingKey, useHtml) {
-  const prefix = position.filled ? '🟢' : '🔴';
+  const prefix = formatStatusIndicator(position, bindingKey, useHtml);
   const priceValue = `${position.price}`;
   const priceText = useHtml
     ? `${wrapNumber(position.price, { binding: `positions.${bindingKey}.price`, step: 10, min: 0 })}지원`
     : `${priceValue}지원`;
 
   if (position.filled) {
+    const job = formatJobText(position, bindingKey, useHtml);
     const level = useHtml
       ? wrapNumber(position.level, { binding: `positions.${bindingKey}.level`, step: 1, min: 0 })
       : position.level;
-    return `${prefix}${position.name}: ${level}${displayText(position.job, useHtml)}(${priceText})`;
+    return `${prefix}${position.name}: ${level}${job}(${priceText})`;
   }
   return `${prefix}${position.name}: 구인중(${priceText})`;
 }
 
 function formatDualSupportPosition(position, bindingKey, useHtml) {
-  const prefix = position.filled ? '🟢' : '🔴';
+  const prefix = formatStatusIndicator(position, bindingKey, useHtml);
   const price1 = useHtml
     ? wrapNumber(position.price, { binding: `positions.${bindingKey}.price`, step: 10, min: 0 })
     : position.price;
@@ -125,25 +158,27 @@ function formatDualSupportPosition(position, bindingKey, useHtml) {
   const priceText = `${price1}/${price2}지원`;
 
   if (position.filled) {
+    const job = formatJobText(position, bindingKey, useHtml);
     const level = useHtml
       ? wrapNumber(position.level, { binding: `positions.${bindingKey}.level`, step: 1, min: 0 })
       : position.level;
-    return `${prefix}${position.name}: ${level}${displayText(position.job, useHtml)}(${priceText})`;
+    return `${prefix}${position.name}: ${level}${job}(${priceText})`;
   }
   return `${prefix}${position.name}: 구인중(${priceText})`;
 }
 
 function formatStandardPosition(position, bindingKey, useHtml) {
-  const prefix = position.filled ? '🟢' : '🔴';
+  const prefix = formatStatusIndicator(position, bindingKey, useHtml);
   const priceText = useHtml
     ? wrapNumber(position.price, { binding: `positions.${bindingKey}.price`, step: 10, min: 0 })
     : position.price;
 
   if (position.filled) {
+    const job = formatJobText(position, bindingKey, useHtml);
     const level = useHtml
       ? wrapNumber(position.level, { binding: `positions.${bindingKey}.level`, step: 1, min: 0 })
       : position.level;
-    return `${prefix}${position.name}: ${level}${displayText(position.job, useHtml)}(${priceText})`;
+    return `${prefix}${position.name}: ${level}${job}(${priceText})`;
   }
   return `${prefix}${position.name}: 구인중(${priceText})`;
 }
@@ -290,6 +325,111 @@ function stopNumberDrag() {
   render();
 }
 
+function toggleFilled(binding) {
+  if (!binding) return;
+  const currentValue = Boolean(getValueByPath(binding));
+  setValueByPath(binding, !currentValue);
+  render();
+}
+
+function positionRouletteOptions() {
+  if (!jobRouletteState.wheel) return;
+  const total = JOB_OPTIONS.length;
+  const radius = 42;
+  jobRouletteState.options.forEach((option, index) => {
+    const angle = (index / total) * 360 - 90;
+    const radians = (angle * Math.PI) / 180;
+    const x = 50 + radius * Math.cos(radians);
+    const y = 50 + radius * Math.sin(radians);
+    option.style.left = `${x}%`;
+    option.style.top = `${y}%`;
+  });
+}
+
+function ensureJobRoulette() {
+  if (jobRouletteState.overlay) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'job-roulette';
+
+  const wheel = document.createElement('div');
+  wheel.className = 'job-roulette-wheel';
+  overlay.appendChild(wheel);
+
+  JOB_OPTIONS.forEach((label, index) => {
+    const option = document.createElement('div');
+    option.className = 'job-roulette-option';
+    option.textContent = label;
+    option.dataset.index = index;
+    wheel.appendChild(option);
+  });
+
+  document.body.appendChild(overlay);
+  jobRouletteState.overlay = overlay;
+  jobRouletteState.wheel = wheel;
+  jobRouletteState.options = Array.from(wheel.querySelectorAll('.job-roulette-option'));
+  positionRouletteOptions();
+}
+
+function setActiveJobOption(index) {
+  if (!jobRouletteState.options.length) return;
+  jobRouletteState.activeIndex = index;
+  jobRouletteState.options.forEach((option, optionIndex) => {
+    option.classList.toggle('active', optionIndex === index);
+  });
+}
+
+function updateJobOptionFromPointer(clientX, clientY) {
+  if (!jobRouletteState.overlay || jobRouletteState.binding === null) return;
+  const dx = clientX - jobRouletteState.center.x;
+  const dy = clientY - jobRouletteState.center.y;
+  if (dx === 0 && dy === 0) return;
+  const rawAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+  const normalized = (rawAngle + 450) % 360; // shift so top = 0
+  const segment = 360 / JOB_OPTIONS.length;
+  const index = Math.floor(normalized / segment);
+  setActiveJobOption(index);
+}
+
+function showJobRoulette(binding, event) {
+  ensureJobRoulette();
+  jobRouletteState.binding = binding;
+  jobRouletteState.center = { x: event.clientX, y: event.clientY };
+  setActiveJobOption(-1);
+
+  jobRouletteState.wheel.style.left = `${event.clientX}px`;
+  jobRouletteState.wheel.style.top = `${event.clientY}px`;
+  jobRouletteState.overlay.classList.add('active');
+
+  document.addEventListener('mousemove', handleJobRouletteMove);
+  document.addEventListener('mouseup', handleJobRouletteEnd);
+  updateJobOptionFromPointer(event.clientX, event.clientY);
+}
+
+function hideJobRoulette() {
+  if (jobRouletteState.overlay) {
+    jobRouletteState.overlay.classList.remove('active');
+  }
+  jobRouletteState.binding = null;
+  jobRouletteState.center = { x: 0, y: 0 };
+  jobRouletteState.activeIndex = -1;
+  document.removeEventListener('mousemove', handleJobRouletteMove);
+  document.removeEventListener('mouseup', handleJobRouletteEnd);
+}
+
+function handleJobRouletteMove(event) {
+  updateJobOptionFromPointer(event.clientX, event.clientY);
+}
+
+function handleJobRouletteEnd() {
+  if (jobRouletteState.binding && jobRouletteState.activeIndex >= 0) {
+    const selectedJob = JOB_OPTIONS[jobRouletteState.activeIndex];
+    setValueByPath(jobRouletteState.binding, selectedJob);
+    render();
+  }
+  hideJobRoulette();
+}
+
 function copyToClipboard() {
   const text = elements.plainOutput?.value || '';
   if (!text) {
@@ -343,6 +483,39 @@ function resetState() {
   setCopyStatus('기본값을 불러왔습니다.');
 }
 
+function handlePreviewClick(event) {
+  const statusToggle = event.target.closest('.status-toggle');
+  if (statusToggle) {
+    const binding = statusToggle.getAttribute('data-binding');
+    toggleFilled(binding);
+  }
+}
+
+function handlePreviewMouseDown(event) {
+  if (event.button !== 0) return;
+
+  const statusToggle = event.target.closest('.status-toggle');
+  if (statusToggle) {
+    event.preventDefault();
+    return;
+  }
+
+  const numberTarget = event.target.closest('.drag-number');
+  if (numberTarget) {
+    startNumberDrag(numberTarget, event);
+    return;
+  }
+
+  const jobTarget = event.target.closest('.job-text');
+  if (jobTarget) {
+    const binding = jobTarget.getAttribute('data-job-binding');
+    if (binding) {
+      event.preventDefault();
+      showJobRoulette(binding, event);
+    }
+  }
+}
+
 function attachEvents() {
   document.querySelectorAll('[data-field-path]').forEach((input) => {
     input.addEventListener('input', handleInputChange);
@@ -353,12 +526,8 @@ function attachEvents() {
   elements.hourInput?.addEventListener('input', handleBaseInput);
   elements.minuteInput?.addEventListener('input', handleBaseInput);
 
-  elements.preview?.addEventListener('mousedown', (event) => {
-    const target = event.target.closest('.drag-number');
-    if (target) {
-      startNumberDrag(target, event);
-    }
-  });
+  elements.preview?.addEventListener('mousedown', handlePreviewMouseDown);
+  elements.preview?.addEventListener('click', handlePreviewClick);
 
   elements.copyButton?.addEventListener('click', copyToClipboard);
   elements.resetButton?.addEventListener('click', resetState);
