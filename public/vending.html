@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>자판기 뽑기 게임</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --card-bg: #ffffff;
+      --primary: #4a6cf7;
+      --secondary: #6c757d;
+      --text: #1f2933;
+      --border: #d2d6dc;
+      --danger: #e02424;
+      --success: #0f9d58;
+      --accent: #f97316;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Noto Sans KR', 'Pretendard', 'Apple SD Gothic Neo', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 18px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+
+    .card + .card {
+      margin-top: 12px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-subtitle {
+      color: var(--secondary);
+      font-size: 0.95rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      background: #eef2ff;
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    .pill small {
+      color: var(--secondary);
+      font-weight: 600;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      background: var(--primary);
+      color: #ffffff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 12px rgba(15, 23, 42, 0.16);
+    }
+
+    .secondary {
+      background: #334155;
+    }
+
+    .danger {
+      background: var(--danger);
+    }
+
+    .ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .grid-wrapper {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #f8fafc;
+      max-height: 70vh;
+      overflow: auto;
+    }
+
+    .vending-grid {
+      display: grid;
+      grid-template-columns: repeat(40, minmax(22px, 1fr));
+      gap: 6px;
+      min-width: 720px;
+    }
+
+    .grid-cell {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--secondary);
+      font-weight: 800;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+      user-select: none;
+    }
+
+    .grid-cell:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(15, 23, 42, 0.12);
+    }
+
+    .grid-cell.revealed {
+      color: #111827;
+      font-size: 1rem;
+      border-color: transparent;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+      transform: none;
+    }
+
+    .grid-legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      font-weight: 700;
+    }
+
+    .legend-color {
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .stat-card {
+      background: #eef2ff;
+      color: var(--primary);
+      border: 1px solid rgba(74, 108, 247, 0.2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      min-width: 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-weight: 700;
+    }
+
+    .stat-card small {
+      color: var(--secondary);
+      font-weight: 600;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: center;
+    }
+
+    th {
+      background: #eef2ff;
+      color: #111827;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #f8fafc;
+    }
+
+    .inventory-table td.name {
+      text-align: left;
+      font-weight: 700;
+    }
+
+    .gacha-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+
+    .gacha-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+
+    .gacha-card h3 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .gacha-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--secondary);
+      font-size: 0.9rem;
+    }
+
+    .reward-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 6px;
+    }
+
+    .reward-item {
+      background: #f8fafc;
+      border-radius: 10px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      border: 1px solid var(--border);
+    }
+
+    .reward-item small {
+      color: var(--secondary);
+      font-weight: 600;
+    }
+
+    .log-list {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .log-item {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+
+    .log-item time {
+      font-size: 0.85rem;
+      color: var(--secondary);
+      font-weight: 600;
+    }
+
+    .note {
+      color: var(--secondary);
+      font-size: 0.95rem;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 1024px) {
+      .vending-grid {
+        min-width: 640px;
+      }
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.65rem;
+      }
+      .vending-grid {
+        grid-template-columns: repeat(20, minmax(20px, 1fr));
+        min-width: 520px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>자판기 뽑기 게임</h1>
+      <p class="note">40 × 50 칸의 자판기에서 아이템을 찾고, 획득한 아이템으로 뽑기를 진행해 보세요. 모든 동작은 오프라인에서도 실행됩니다.</p>
+    </header>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>게임 진행 정보</h2>
+        <div class="button-row">
+          <button id="add-coin" type="button">코인 +10</button>
+          <button id="reset-game" type="button" class="ghost">새 게임 시작</button>
+        </div>
+      </div>
+      <div class="status-row">
+        <div class="stat-card">
+          <small>보유 코인</small>
+          <span id="coin-count">0</span>
+        </div>
+        <div class="stat-card">
+          <small>미개봉 칸</small>
+          <span id="remaining-cells">2000</span>
+        </div>
+        <div class="stat-card">
+          <small>획득한 카스 · 테라 · 하이트 · 삼다수</small>
+          <span id="key-items">카스 0개 / 테라 0개 / 하이트 0개 / 삼다수 0개</span>
+        </div>
+      </div>
+      <p class="note" style="margin-top: 12px;">칸을 누를 때마다 코인 1개가 소모되며, 이미 연 칸은 다시 열지 못합니다. 새 게임을 시작하면 자판기 배치와 뽑기 보상이 모두 초기화됩니다.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>인벤토리</h2>
+        <span class="card-subtitle">획득한 모든 아이템을 한눈에 확인하세요.</span>
+      </div>
+      <table class="inventory-table">
+        <thead>
+          <tr>
+            <th>아이템</th>
+            <th>보유 수량</th>
+          </tr>
+        </thead>
+        <tbody id="inventory-body"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>뽑기</h2>
+        <span class="card-subtitle">해당 아이템을 1개 소모해 확률형 보상을 획득합니다. 보상 재고가 줄어들수록 확률이 실시간으로 변합니다.</span>
+      </div>
+      <div class="gacha-list" id="gacha-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>자판기 (40 × 50)</h2>
+        <span class="card-subtitle">각 칸은 한 번만 열 수 있으며, 열면 해당 칸에 배치된 아이템의 약칭을 보여줍니다.</span>
+      </div>
+      <div class="grid-wrapper">
+        <div class="vending-grid" id="vending-grid" aria-label="자판기 그리드"></div>
+      </div>
+      <div class="grid-legend" id="grid-legend"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>진행 로그</h2>
+        <span class="card-subtitle">최근 12개의 행동 기록</span>
+      </div>
+      <ul class="log-list" id="log-list"></ul>
+    </section>
+  </div>
+
+  <script>
+    const baseItems = [
+      { name: '카스', short: '카', count: 10, bg: '#fef2f2', color: '#b91c1c' },
+      { name: '테라', short: '테', count: 100, bg: '#ecfdf3', color: '#047857' },
+      { name: '하이트', short: '하', count: 290, bg: '#eff6ff', color: '#1d4ed8' },
+      { name: '삼다수', short: '삼', count: 1600, bg: '#f5f3ff', color: '#7c3aed' }
+    ];
+
+    const gachaConfigs = [
+      {
+        key: 'kass',
+        title: '카스 뽑기',
+        costItem: '카스',
+        description: '카스 1개 소모 (상품: 일비 1개, 테라 9개)',
+        rewards: [
+          { name: '일비', count: 1 },
+          { name: '테라', count: 9 }
+        ]
+      },
+      {
+        key: 'terra',
+        title: '테라 뽑기',
+        costItem: '테라',
+        description: '테라 1개 소모 (상품: 노목 1개, 장공 3개, 활공 1개, 전민 1개, 망행 2개, 아공 5개, 하이트 96개)',
+        rewards: [
+          { name: '노목', count: 1 },
+          { name: '장공', count: 3 },
+          { name: '활공', count: 1 },
+          { name: '전민', count: 1 },
+          { name: '망행', count: 2 },
+          { name: '아공', count: 5 },
+          { name: '하이트', count: 96 }
+        ]
+      },
+      {
+        key: 'hite',
+        title: '하이트 뽑기',
+        costItem: '하이트',
+        description: '하이트 1개 소모 (상품: 신이 2, 펫이 4, 전행 5, 스마 1, 단공 1, 투체 4, 두도 1, 전방 2, 투방 1, 망방 1, 전방 5, 귀체 2, 삼다수 357)',
+        rewards: [
+          { name: '신이', count: 2 },
+          { name: '펫이', count: 4 },
+          { name: '전행', count: 5 },
+          { name: '스마', count: 1 },
+          { name: '단공', count: 1 },
+          { name: '투체', count: 4 },
+          { name: '두도', count: 1 },
+          { name: '전방', count: 2 },
+          { name: '투방', count: 1 },
+          { name: '망방', count: 1 },
+          { name: '전방', count: 5 },
+          { name: '귀체', count: 2 },
+          { name: '삼다수', count: 357 }
+        ]
+      }
+    ];
+
+    const itemOrder = [
+      '카스', '테라', '하이트', '삼다수', '일비', '노목', '장공', '활공', '전민', '망행', '아공',
+      '신이', '펫이', '전행', '스마', '단공', '투체', '두도', '전방', '투방', '망방', '귀체'
+    ];
+
+    const gridElement = document.getElementById('vending-grid');
+    const gridLegend = document.getElementById('grid-legend');
+    const coinCountEl = document.getElementById('coin-count');
+    const remainingCellsEl = document.getElementById('remaining-cells');
+    const keyItemsEl = document.getElementById('key-items');
+    const inventoryBody = document.getElementById('inventory-body');
+    const gachaListEl = document.getElementById('gacha-list');
+    const logList = document.getElementById('log-list');
+
+    let inventory = { coins: 0 };
+    let cells = [];
+    let gachaPools = {};
+    let logs = [];
+
+    const cloneRewards = (rewards) => rewards.map(item => ({ ...item }));
+
+    const shuffle = (array) => {
+      for (let i = array.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    };
+
+    const setupCells = () => {
+      const items = [];
+      baseItems.forEach(({ name, short, count }) => {
+        for (let i = 0; i < count; i += 1) {
+          items.push({ name, short });
+        }
+      });
+      shuffle(items);
+      cells = items.map((item, index) => ({
+        ...item,
+        revealed: false,
+        index
+      }));
+    };
+
+    const renderGrid = () => {
+      gridElement.innerHTML = '';
+      cells.forEach((cell) => {
+        const button = document.createElement('button');
+        button.className = 'grid-cell';
+        button.textContent = '?';
+        button.dataset.index = cell.index;
+        button.addEventListener('click', () => handleCellClick(cell.index, button));
+        gridElement.appendChild(button);
+      });
+    };
+
+    const renderLegend = () => {
+      gridLegend.innerHTML = '';
+      baseItems.forEach(({ name, short, bg, color }) => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `
+          <span class="legend-color" style="background:${bg}; border-color:${color}"></span>
+          <span>${short} = ${name}</span>
+        `;
+        gridLegend.appendChild(item);
+      });
+    };
+
+    const updateStats = () => {
+      const remaining = cells.filter((cell) => !cell.revealed).length;
+      remainingCellsEl.textContent = remaining;
+      coinCountEl.textContent = inventory.coins.toLocaleString();
+      const kass = inventory['카스'] || 0;
+      const terra = inventory['테라'] || 0;
+      const hite = inventory['하이트'] || 0;
+      const samdasu = inventory['삼다수'] || 0;
+      keyItemsEl.textContent = `카스 ${kass}개 / 테라 ${terra}개 / 하이트 ${hite}개 / 삼다수 ${samdasu}개`;
+    };
+
+    const ensureItem = (name) => {
+      if (!(name in inventory)) {
+        inventory[name] = 0;
+      }
+      if (!itemOrder.includes(name)) {
+        itemOrder.push(name);
+      }
+    };
+
+    const addItem = (name, amount = 1) => {
+      ensureItem(name);
+      inventory[name] += amount;
+    };
+
+    const spendItem = (name, amount = 1) => {
+      ensureItem(name);
+      if (inventory[name] < amount) return false;
+      inventory[name] -= amount;
+      return true;
+    };
+
+    const renderInventory = () => {
+      inventoryBody.innerHTML = '';
+      itemOrder.forEach((name) => {
+        ensureItem(name);
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td class="name">${name}</td>
+          <td>${inventory[name].toLocaleString()}</td>
+        `;
+        inventoryBody.appendChild(row);
+      });
+    };
+
+    const renderGacha = () => {
+      gachaListEl.innerHTML = '';
+      gachaConfigs.forEach((config) => {
+        const pool = gachaPools[config.key];
+        const total = pool.reduce((sum, item) => sum + item.count, 0);
+        const card = document.createElement('div');
+        card.className = 'gacha-card';
+        card.innerHTML = `
+          <h3>${config.title}</h3>
+          <div class="gacha-meta">
+            <span>소모: ${config.costItem} 1개</span>
+            <span>남은 상품: <strong>${total}</strong>개</span>
+          </div>
+          <p class="note">${config.description}</p>
+          <div class="reward-list">
+            ${pool.map((item) => `
+              <div class="reward-item">
+                <span>${item.name}</span>
+                <span><small>잔여</small> ${item.count}</span>
+              </div>
+            `).join('')}
+          </div>
+          <div class="button-row">
+            <button type="button" data-gacha="${config.key}" ${total === 0 ? 'disabled' : ''}>
+              ${config.title} 돌리기
+            </button>
+          </div>
+        `;
+        const drawButton = card.querySelector('button');
+        drawButton.disabled = total === 0 || (inventory[config.costItem] || 0) <= 0;
+        drawButton.addEventListener('click', () => handleGacha(config.key));
+        gachaListEl.appendChild(card);
+      });
+    };
+
+    const pickReward = (pool) => {
+      const total = pool.reduce((sum, item) => sum + item.count, 0);
+      if (total === 0) return null;
+      let roll = Math.floor(Math.random() * total);
+      for (const item of pool) {
+        if (roll < item.count) {
+          return item;
+        }
+        roll -= item.count;
+      }
+      return null;
+    };
+
+    const addLog = (message) => {
+      const now = new Date();
+      logs.unshift({
+        message,
+        time: now.toLocaleTimeString()
+      });
+      logs = logs.slice(0, 12);
+      renderLogs();
+    };
+
+    const renderLogs = () => {
+      logList.innerHTML = '';
+      logs.forEach(({ message, time }) => {
+        const li = document.createElement('li');
+        li.className = 'log-item';
+        li.innerHTML = `<span>${message}</span><time>${time}</time>`;
+        logList.appendChild(li);
+      });
+    };
+
+    const handleCellClick = (index, buttonEl) => {
+      const cell = cells[index];
+      if (cell.revealed) {
+        addLog('이미 연 칸입니다.');
+        return;
+      }
+      if (inventory.coins <= 0) {
+        addLog('코인이 부족합니다. 코인을 충전하세요.');
+        return;
+      }
+      inventory.coins -= 1;
+      cell.revealed = true;
+      buttonEl.classList.add('revealed');
+      const style = baseItems.find((item) => item.name === cell.name);
+      if (style) {
+        buttonEl.style.background = style.bg;
+        buttonEl.style.color = style.color;
+      }
+      buttonEl.textContent = cell.short;
+      addItem(cell.name, 1);
+      addLog(`칸 ${index + 1}에서 ${cell.name} 획득!`);
+      updateStats();
+      renderInventory();
+      renderGacha();
+    };
+
+    const handleGacha = (key) => {
+      const config = gachaConfigs.find((item) => item.key === key);
+      if (!config) return;
+      const pool = gachaPools[key];
+      const total = pool.reduce((sum, item) => sum + item.count, 0);
+      if (total === 0) {
+        addLog(`${config.title} 상품이 모두 소진되었습니다.`);
+        return;
+      }
+      if (!spendItem(config.costItem, 1)) {
+        addLog(`${config.costItem}가 부족합니다.`);
+        renderInventory();
+        renderGacha();
+        return;
+      }
+      const reward = pickReward(pool);
+      if (!reward) {
+        addLog('뽑기를 실행할 수 없습니다.');
+        return;
+      }
+      reward.count -= 1;
+      addItem(reward.name, 1);
+      addLog(`${config.title} 결과: ${reward.name} 획득!`);
+      updateStats();
+      renderInventory();
+      renderGacha();
+    };
+
+    const resetGachaPools = () => {
+      gachaPools = gachaConfigs.reduce((acc, config) => {
+        acc[config.key] = cloneRewards(config.rewards);
+        return acc;
+      }, {});
+    };
+
+    const initInventory = () => {
+      inventory = { coins: 0 };
+      itemOrder.forEach((name) => {
+        inventory[name] = 0;
+      });
+    };
+
+    const resetGame = (silent = false) => {
+      initInventory();
+      setupCells();
+      renderGrid();
+      renderLegend();
+      resetGachaPools();
+      logs = [];
+      renderLogs();
+      updateStats();
+      renderInventory();
+      renderGacha();
+      if (!silent) addLog('새 게임이 시작되었습니다. 코인을 충전하고 칸을 열어보세요!');
+    };
+
+    document.getElementById('add-coin').addEventListener('click', () => {
+      inventory.coins += 10;
+      updateStats();
+      renderGacha();
+      addLog('코인 10개를 충전했습니다.');
+    });
+
+    document.getElementById('reset-game').addEventListener('click', () => {
+      const confirmed = confirm('새 게임을 시작하면 자판기 배치와 뽑기 보상이 모두 초기화됩니다. 진행할까요?');
+      if (confirmed) {
+        resetGame();
+      }
+    });
+
+    // 초기화
+    resetGame(true);
+    addLog('코인을 충전하고 자판기 게임을 시작하세요!');
+  </script>
+</body>
+</html>
