@@ -1176,7 +1176,7 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
       const manualButton = document.createElement('button');
       manualButton.type = 'button';
-      manualButton.textContent = '직접입력';
+      manualButton.textContent = '$';
       manualButton.classList.add('mini-button', 'secondary', 'payment-button');
       manualButton.addEventListener('click', () => {
         openPaymentInputModal(i);
