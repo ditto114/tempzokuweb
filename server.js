@@ -1,32 +1,23 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const crypto = require('crypto');
 const http = require('http');
-const { Server } = require('socket.io');
+
 const { startDiscordBot } = require('./discordBot');
-const { registerYutSocket } = require('./yut/socket');
+
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-  },
-});
+
 const PORT = process.env.PORT || 47984;
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'dito1121!',
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-};
-
-const databaseName = process.env.DB_NAME || 'raid_distribution';
-
-let pool;
+// PostgreSQL (Supabase) 연결 설정
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 const SESSION_COOKIE_NAME = 'sessionToken';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -319,14 +310,14 @@ async function persistTimer(timer) {
   const remainingMs = Math.max(0, Math.floor(timer.remainingMs ?? 0));
   const endTime = typeof timer.endTime === 'number' ? Math.floor(timer.endTime) : null;
   await pool.query(
-    `UPDATE timers SET name = ?, duration_ms = ?, remaining_ms = ?, is_running = ?, repeat_enabled = ?, swipe_to_reset = ?, end_time = ?, display_order = ? WHERE id = ? AND channel_code = ?`,
+    `UPDATE timers SET name = $1, duration_ms = $2, remaining_ms = $3, is_running = $4, repeat_enabled = $5, swipe_to_reset = $6, end_time = $7, display_order = $8 WHERE id = $9 AND channel_code = $10`,
     [
       timer.name,
       Math.floor(timer.durationMs),
       remainingMs,
-      timer.isRunning ? 1 : 0,
-      timer.repeatEnabled ? 1 : 0,
-      timer.swipeToReset ? 1 : 0,
+      timer.isRunning,
+      timer.repeatEnabled,
+      timer.swipeToReset,
       endTime,
       timer.displayOrder ?? 0,
       timer.id,
@@ -339,16 +330,16 @@ async function createTimerInDatabase({ name, durationMs, channelCode }) {
   if (!pool) {
     throw new Error('Database connection is not initialized.');
   }
-  const [rows] = await pool.query(
-    'SELECT COALESCE(MAX(display_order), -1) AS maxOrder FROM timers WHERE channel_code = ?',
+  const { rows } = await pool.query(
+    'SELECT COALESCE(MAX(display_order), -1) AS "maxOrder" FROM timers WHERE channel_code = $1',
     [channelCode],
   );
   const nextOrder = Number(rows?.[0]?.maxOrder ?? -1) + 1;
-  const [result] = await pool.query(
-    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order, channel_code) VALUES (?, ?, ?, 0, 0, 0, NULL, ?, ?)`,
+  const result = await pool.query(
+    `INSERT INTO timers (name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order, channel_code) VALUES ($1, $2, $3, FALSE, FALSE, FALSE, NULL, $4, $5) RETURNING id`,
     [name, Math.floor(durationMs), Math.floor(durationMs), nextOrder, channelCode],
   );
-  return { id: result.insertId, displayOrder: nextOrder };
+  return { id: result.rows[0].id, displayOrder: nextOrder };
 }
 
 async function deleteTimerFromDatabase(id, channelCode) {
@@ -356,31 +347,31 @@ async function deleteTimerFromDatabase(id, channelCode) {
     throw new Error('Database connection is not initialized.');
   }
 
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
-    const [rows] = await connection.query(
-      'SELECT display_order FROM timers WHERE id = ? AND channel_code = ?',
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT display_order FROM timers WHERE id = $1 AND channel_code = $2',
       [id, channelCode],
     );
     if (!Array.isArray(rows) || rows.length === 0) {
-      await connection.rollback();
+      await client.query('ROLLBACK');
       return null;
     }
 
     const displayOrder = Number(rows[0].display_order ?? 0);
-    await connection.query('DELETE FROM timers WHERE id = ? AND channel_code = ?', [id, channelCode]);
-    await connection.commit();
+    await client.query('DELETE FROM timers WHERE id = $1 AND channel_code = $2', [id, channelCode]);
+    await client.query('COMMIT');
     return displayOrder;
   } catch (error) {
     try {
-      await connection.rollback();
+      await client.query('ROLLBACK');
     } catch (rollbackError) {
       console.error('Failed to rollback timer deletion:', rollbackError);
     }
     throw error;
   } finally {
-    connection.release();
+    client.release();
   }
 }
 
@@ -389,7 +380,7 @@ async function loadTimersFromDatabase() {
     return;
   }
 
-  const [rows] = await pool.query(
+  const { rows } = await pool.query(
     `SELECT id, name, duration_ms, remaining_ms, is_running, repeat_enabled, swipe_to_reset, end_time, display_order, channel_code FROM timers ORDER BY channel_code ASC, display_order ASC, id ASC`,
   );
 
@@ -484,8 +475,8 @@ async function loadGridSettingsFromDatabase() {
   knownChannels.clear();
   registerChannel(DEFAULT_CHANNEL_CODE);
   gridSettingsByChannel.clear();
-  const [rows] = await pool.query(
-    'SELECT channel_code, value FROM timer_settings WHERE name = ?',
+  const { rows } = await pool.query(
+    'SELECT channel_code, value FROM timer_settings WHERE name = $1',
     ['grid'],
   );
   let hasDefaultChannelSettings = false;
@@ -510,7 +501,7 @@ async function loadGridSettingsFromDatabase() {
     gridSettingsByChannel.set(DEFAULT_CHANNEL_CODE, { ...DEFAULT_GRID_SETTINGS });
     try {
       await pool.query(
-        'INSERT INTO timer_settings (channel_code, name, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        'INSERT INTO timer_settings (channel_code, name, value) VALUES ($1, $2, $3) ON CONFLICT (channel_code, name) DO UPDATE SET value = EXCLUDED.value',
         [DEFAULT_CHANNEL_CODE, 'grid', JSON.stringify(DEFAULT_GRID_SETTINGS)],
       );
     } catch (error) {
@@ -526,185 +517,36 @@ async function loadGridSettingsFromDatabase() {
 }
 
 async function initializeDatabase() {
-  const connection = await mysql.createConnection(dbConfig);
-  await connection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-  await connection.query(`USE \`${databaseName}\``);
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS members (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      nickname VARCHAR(100) NOT NULL,
-      job VARCHAR(100) NOT NULL,
-      display_order INT NOT NULL DEFAULT 0,
-      included TINYINT(1) NOT NULL DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-  const [includedColumn] = await connection.query(
-    "SHOW COLUMNS FROM members LIKE 'included'",
-  );
-  if (includedColumn.length === 0) {
-    await connection.query(
-      'ALTER TABLE members ADD COLUMN included TINYINT(1) NOT NULL DEFAULT 1 AFTER job',
-    );
+  // PostgreSQL에서는 테이블이 이미 존재한다고 가정 (setup-supabase.sql 실행 필요)
+  // 연결 테스트
+  try {
+    await pool.query('SELECT 1');
+    console.log('✅ PostgreSQL (Supabase) 연결 성공');
+  } catch (error) {
+    console.error('❌ PostgreSQL 연결 실패:', error.message);
+    throw error;
   }
-  const [displayOrderColumn] = await connection.query(
-    "SHOW COLUMNS FROM members LIKE 'display_order'",
-  );
-  if (displayOrderColumn.length === 0) {
-    await connection.query(
-      'ALTER TABLE members ADD COLUMN display_order INT NOT NULL DEFAULT 0 AFTER job',
-    );
-  }
-  const [memberRows] = await connection.query(
-    'SELECT id, display_order FROM members ORDER BY display_order ASC, id ASC',
-  );
-  const seenOrders = new Set();
-  let needsNormalization = false;
-  memberRows.forEach((row) => {
-    const orderValue = Number(row.display_order);
-    if (!Number.isInteger(orderValue) || orderValue < 1 || seenOrders.has(orderValue)) {
-      needsNormalization = true;
-      return;
-    }
-    seenOrders.add(orderValue);
-  });
-  if (needsNormalization && memberRows.length > 0) {
-    await connection.beginTransaction();
-    try {
-      for (let i = 0; i < memberRows.length; i += 1) {
-        const row = memberRows[i];
-        const normalizedOrder = i + 1;
-        await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [normalizedOrder, row.id]);
-      }
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    }
-  }
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS distributions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      data JSON NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS admins (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      username VARCHAR(100) NOT NULL UNIQUE,
-      password_hash VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-  const [existingAdminRows] = await connection.query(
-    'SELECT id FROM admins WHERE username = ? LIMIT 1',
+
+  // 기본 admin 계정 확인 및 생성
+  const { rows: existingAdminRows } = await pool.query(
+    'SELECT id FROM admins WHERE username = $1 LIMIT 1',
     ['cass'],
   );
   if (!Array.isArray(existingAdminRows) || existingAdminRows.length === 0) {
     const passwordHash = hashPassword('9799');
-    await connection.query(
-      'INSERT INTO admins (username, password_hash) VALUES (?, ?)',
+    await pool.query(
+      'INSERT INTO admins (username, password_hash) VALUES ($1, $2)',
       ['cass', passwordHash],
     );
+    console.log('✅ 기본 admin 계정 생성 완료');
   }
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS timers (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}',
-      name VARCHAR(255) NOT NULL,
-      duration_ms INT NOT NULL,
-      remaining_ms INT NOT NULL,
-      is_running TINYINT(1) NOT NULL DEFAULT 0,
-      repeat_enabled TINYINT(1) NOT NULL DEFAULT 0,
-      swipe_to_reset TINYINT(1) NOT NULL DEFAULT 0,
-      display_order INT NOT NULL DEFAULT 0,
-      end_time BIGINT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS timer_settings (
-      channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}',
-      name VARCHAR(100) NOT NULL,
-      value JSON NOT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (channel_code, name)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-  const [timerDisplayOrderColumn] = await connection.query(
-    "SHOW COLUMNS FROM timers LIKE 'display_order'",
-  );
-  if (timerDisplayOrderColumn.length === 0) {
-    await connection.query(
-      'ALTER TABLE timers ADD COLUMN display_order INT NOT NULL DEFAULT 0',
-    );
-  }
-
-  const [swipeColumn] = await connection.query(
-    "SHOW COLUMNS FROM timers LIKE 'swipe_to_reset'",
-  );
-  if (swipeColumn.length === 0) {
-    await connection.query(
-      'ALTER TABLE timers ADD COLUMN swipe_to_reset TINYINT(1) NOT NULL DEFAULT 0 AFTER repeat_enabled',
-    );
-  }
-
-  const [timerChannelColumn] = await connection.query(
-    "SHOW COLUMNS FROM timers LIKE 'channel_code'",
-  );
-  if (timerChannelColumn.length === 0) {
-    await connection.query(
-      `ALTER TABLE timers ADD COLUMN channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}' AFTER id`,
-    );
-  }
-  await connection.query(
-    'UPDATE timers SET channel_code = ? WHERE channel_code IS NULL OR channel_code = ?',
-    [DEFAULT_CHANNEL_CODE, ''],
-  );
-
-  const [settingsChannelColumn] = await connection.query(
-    "SHOW COLUMNS FROM timer_settings LIKE 'channel_code'",
-  );
-  if (settingsChannelColumn.length === 0) {
-    await connection.query(
-      `ALTER TABLE timer_settings ADD COLUMN channel_code VARCHAR(20) NOT NULL DEFAULT '${DEFAULT_CHANNEL_CODE}' FIRST`,
-    );
-  }
-  await connection.query(
-    'UPDATE timer_settings SET channel_code = ? WHERE channel_code IS NULL OR channel_code = ?',
-    [DEFAULT_CHANNEL_CODE, ''],
-  );
-
-  const [timerSettingsPrimaryKey] = await connection.query(
-    "SHOW INDEX FROM timer_settings WHERE Key_name = 'PRIMARY'",
-  );
-  const primaryColumns = new Set(timerSettingsPrimaryKey.map((row) => row.Column_name));
-  const hasChannelPrimaryKey =
-    primaryColumns.has('channel_code') && primaryColumns.has('name') && primaryColumns.size === 2;
-  if (!hasChannelPrimaryKey && timerSettingsPrimaryKey.length > 0) {
-    await connection.query('ALTER TABLE timer_settings DROP PRIMARY KEY');
-    await connection.query('ALTER TABLE timer_settings ADD PRIMARY KEY (channel_code, name)');
-  }
-  await connection.end();
-
-  pool = mysql.createPool({
-    ...dbConfig,
-    database: databaseName,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-  });
 
   await loadGridSettingsFromDatabase();
   await loadTimersFromDatabase();
 }
 
 app.use(express.json());
-registerYutSocket(io);
+
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
@@ -734,8 +576,8 @@ app.post('/api/login', async (req, res) => {
   }
 
   try {
-    const [rows] = await pool.query(
-      'SELECT id, username, password_hash FROM admins WHERE username = ? LIMIT 1',
+    const { rows } = await pool.query(
+      'SELECT id, username, password_hash FROM admins WHERE username = $1 LIMIT 1',
       [username],
     );
 
@@ -779,10 +621,10 @@ app.get('/api/session', (req, res) => {
 
 app.get('/api/members', requireApiAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT id, nickname, job, included, display_order FROM members ORDER BY display_order ASC, id ASC',
+    const { rows } = await pool.query(
+      'SELECT id, nickname, job, included, display_order, leger_order FROM members ORDER BY display_order ASC, id ASC',
     );
-    const [distributionRows] = await pool.query('SELECT data FROM distributions');
+    const { rows: distributionRows } = await pool.query('SELECT data FROM distributions');
 
     const outstandingMap = new Map();
     const nicknameMap = new Map();
@@ -858,8 +700,9 @@ app.get('/api/members', requireApiAuth, async (req, res) => {
       id: row.id,
       nickname: row.nickname,
       job: row.job,
-      included: row.included === 1 || row.included === true,
+      included: row.included === true,
       displayOrder: Number(row.display_order) || 0,
+      legerOrder: Number(row.leger_order) || 0,
       outstandingAmount: Math.max(0, Math.floor(outstandingMap.get(row.id) ?? 0)),
     }));
 
@@ -878,17 +721,17 @@ app.post('/api/members', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const [[{ maxOrder }]] = await pool.query(
-      'SELECT COALESCE(MAX(display_order), 0) AS maxOrder FROM members',
+    const { rows: maxRows } = await pool.query(
+      'SELECT COALESCE(MAX(display_order), 0) AS "maxOrder" FROM members',
     );
-    const displayOrder = Number(maxOrder) + 1;
-    const [result] = await pool.query(
-      'INSERT INTO members (nickname, job, display_order) VALUES (?, ?, ?)',
-      [nickname, job, displayOrder],
+    const displayOrder = Number(maxRows[0]?.maxOrder ?? 0) + 1;
+    const result = await pool.query(
+      'INSERT INTO members (nickname, job, display_order, leger_order) VALUES ($1, $2, $3, $4) RETURNING id',
+      [nickname, job, displayOrder, 0],
     );
     res
       .status(201)
-      .json({ id: result.insertId, nickname, job, included: true, displayOrder, outstandingAmount: 0 });
+      .json({ id: result.rows[0].id, nickname, job, included: true, displayOrder, legerOrder: 0, outstandingAmount: 0 });
   } catch (error) {
     console.error('Error adding member:', error);
     res.status(500).json({ message: '공대원 정보를 저장하는 중 오류가 발생했습니다.' });
@@ -897,20 +740,52 @@ app.post('/api/members', requireApiAuth, async (req, res) => {
 
 app.patch('/api/members/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
-  const { included } = req.body || {};
+  const body = req.body || {};
 
-  if (!id || typeof included !== 'boolean') {
-    return res.status(400).json({ message: '분배 포함 여부를 올바르게 전달해주세요.' });
+  const updateFields = [];
+  const updateValues = [];
+  let paramIndex = 1;
+
+  if (typeof body.included === 'boolean') {
+    updateFields.push(`included = $${paramIndex++}`);
+    updateValues.push(body.included);
+  }
+
+  if (typeof body.nickname === 'string') {
+    updateFields.push(`nickname = $${paramIndex++}`);
+    updateValues.push(body.nickname.trim());
+  }
+
+  if (typeof body.job === 'string') {
+    updateFields.push(`job = $${paramIndex++}`);
+    updateValues.push(body.job.trim());
+  }
+
+  if (typeof body.displayOrder === 'number' && Number.isInteger(body.displayOrder)) {
+    updateFields.push(`display_order = $${paramIndex++}`);
+    updateValues.push(body.displayOrder);
+  }
+
+  if (typeof body.legerOrder === 'number' && Number.isInteger(body.legerOrder)) {
+    updateFields.push(`leger_order = $${paramIndex++}`);
+    updateValues.push(body.legerOrder);
+  }
+
+  if (updateFields.length === 0) {
+    return res.status(400).json({ message: '수정할 내용을 전달해주세요.' });
   }
 
   try {
-    const [result] = await pool.query('UPDATE members SET included = ? WHERE id = ?', [included ? 1 : 0, id]);
-    if (result.affectedRows === 0) {
+    const result = await pool.query(
+      `UPDATE members SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
+      [...updateValues, id],
+    );
+    if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
     }
-    res.json({ id: Number(id), included });
+    res.json({ id: Number(id), ...body });
   } catch (error) {
-    console.error('Error updating member inclusion:', error);
+    console.error('Error updating member:', error);
     res.status(500).json({ message: '공대원 정보를 수정하는 중 오류가 발생했습니다.' });
   }
 });
@@ -921,27 +796,30 @@ app.post('/api/members/reorder', requireApiAuth, async (req, res) => {
     return res.status(400).json({ message: '올바른 공대원 정보를 전달해주세요.' });
   }
 
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
-    const [[source]] = await connection.query(
-      'SELECT display_order FROM members WHERE id = ? LIMIT 1',
+    await client.query('BEGIN');
+    const { rows: sourceRows } = await client.query(
+      'SELECT display_order FROM members WHERE id = $1 LIMIT 1',
       [sourceId],
     );
-    const [[target]] = await connection.query(
-      'SELECT display_order FROM members WHERE id = ? LIMIT 1',
+    const { rows: targetRows } = await client.query(
+      'SELECT display_order FROM members WHERE id = $1 LIMIT 1',
       [targetId],
     );
 
-    if (!source || !target) {
-      await connection.rollback();
+    if (!sourceRows[0] || !targetRows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
     }
 
-    await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [target.display_order, sourceId]);
-    await connection.query('UPDATE members SET display_order = ? WHERE id = ?', [source.display_order, targetId]);
+    const source = sourceRows[0];
+    const target = targetRows[0];
 
-    await connection.commit();
+    await client.query('UPDATE members SET display_order = $1 WHERE id = $2', [target.display_order, sourceId]);
+    await client.query('UPDATE members SET display_order = $1 WHERE id = $2', [source.display_order, targetId]);
+
+    await client.query('COMMIT');
     return res.json({
       sourceId,
       sourceOrder: target.display_order,
@@ -949,11 +827,11 @@ app.post('/api/members/reorder', requireApiAuth, async (req, res) => {
       targetOrder: source.display_order,
     });
   } catch (error) {
-    await connection.rollback();
+    await client.query('ROLLBACK');
     console.error('Error reordering members:', error);
     return res.status(500).json({ message: '순번을 변경하는 중 오류가 발생했습니다.' });
   } finally {
-    connection.release();
+    client.release();
   }
 });
 
@@ -961,8 +839,8 @@ app.delete('/api/members/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const [result] = await pool.query('DELETE FROM members WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
+    const result = await pool.query('DELETE FROM members WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
     }
     res.status(204).send();
@@ -1017,12 +895,13 @@ function summarizeDistributionMembers(payload = {}) {
 
 app.get('/api/distributions', requireApiAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       'SELECT id, title, data, created_at, updated_at FROM distributions ORDER BY created_at DESC, id DESC',
     );
     const enhanced = rows.map((row) => {
       const payload = normalizeDistributionData(row.data);
       const { paidTrueCount, paidFalseCount } = summarizeDistributionMembers(payload);
+      const manager = payload.manager || '';
       return {
         id: row.id,
         title: row.title,
@@ -1030,6 +909,7 @@ app.get('/api/distributions', requireApiAuth, async (req, res) => {
         updated_at: row.updated_at,
         paid_true_count: paidTrueCount,
         paid_false_count: paidFalseCount,
+        manager,
       };
     });
     res.json(enhanced);
@@ -1042,7 +922,7 @@ app.get('/api/distributions', requireApiAuth, async (req, res) => {
 app.get('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
   try {
-    const [rows] = await pool.query('SELECT id, title, data, created_at, updated_at FROM distributions WHERE id = ?', [id]);
+    const { rows } = await pool.query('SELECT id, title, data, created_at, updated_at FROM distributions WHERE id = $1', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
@@ -1069,8 +949,8 @@ app.post('/api/distributions', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const [result] = await pool.query('INSERT INTO distributions (title, data) VALUES (?, ?)', [title, JSON.stringify(data)]);
-    const [rows] = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = ?', [result.insertId]);
+    const result = await pool.query('INSERT INTO distributions (title, data) VALUES ($1, $2) RETURNING id', [title, JSON.stringify(data)]);
+    const { rows } = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1', [result.rows[0].id]);
     res.status(201).json(rows[0]);
   } catch (error) {
     console.error('Error saving distribution:', error);
@@ -1087,11 +967,11 @@ app.put('/api/distributions/:id', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const [result] = await pool.query('UPDATE distributions SET title = ?, data = ? WHERE id = ?', [title, JSON.stringify(data), id]);
-    if (result.affectedRows === 0) {
+    const result = await pool.query('UPDATE distributions SET title = $1, data = $2 WHERE id = $3', [title, JSON.stringify(data), id]);
+    if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
-    const [rows] = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = ?', [id]);
+    const { rows } = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1', [id]);
     res.json(rows[0]);
   } catch (error) {
     console.error('Error updating distribution:', error);
@@ -1103,8 +983,8 @@ app.delete('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const [result] = await pool.query('DELETE FROM distributions WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
+    const result = await pool.query('DELETE FROM distributions WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
     res.status(204).send();
@@ -1419,28 +1299,28 @@ app.post('/api/timers/reorder', requireChannel, async (req, res) => {
     }
   }
 
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
+    await client.query('BEGIN');
     for (const [id, position] of assignments.entries()) {
-      await connection.query(
-        'UPDATE timers SET display_order = ? WHERE id = ? AND channel_code = ?',
+      await client.query(
+        'UPDATE timers SET display_order = $1 WHERE id = $2 AND channel_code = $3',
         [position, id, channelCode],
       );
     }
-    await connection.commit();
+    await client.query('COMMIT');
   } catch (error) {
     try {
-      await connection.rollback();
+      await client.query('ROLLBACK');
     } catch (rollbackError) {
       console.error('Failed to rollback timer reorder:', rollbackError);
     }
     console.error('Error reordering timers:', error);
-    connection.release();
+    client.release();
     return res.status(500).json({ message: '타이머 순서를 변경하는 중 오류가 발생했습니다.' });
   }
 
-  connection.release();
+  client.release();
 
   const now = Date.now();
   assignments.forEach((position, id) => {
@@ -1471,7 +1351,7 @@ app.post('/api/timers/grid-settings', requireChannel, async (req, res) => {
 
   try {
     await pool.query(
-      'INSERT INTO timer_settings (channel_code, name, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+      'INSERT INTO timer_settings (channel_code, name, value) VALUES ($1, $2, $3) ON CONFLICT (channel_code, name) DO UPDATE SET value = EXCLUDED.value',
       [channelCode, 'grid', JSON.stringify(nextSettings)],
     );
   } catch (error) {

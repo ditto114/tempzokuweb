@@ -26,6 +26,7 @@ let currentTitle = '';
 let currentView = 'list';
 let useBaseMembersForEditor = true;
 let expenses = [];
+let dropIncentiveRate = 1.0; // Default 1%
 
 const DEFAULT_EXPENSE_ROWS = 2;
 const managedModalIds = ['member-modal', 'expense-modal', 'payment-input-modal'];
@@ -325,18 +326,16 @@ function formatDateTime(value) {
 function setPageTitle(title) {
   currentTitle = title;
   const titleElement = document.getElementById('page-title');
-  if (!titleElement) {
-    return;
-  }
-  if (currentView === 'list') {
-    titleElement.textContent = '카스공대 혼테일 분배표';
-  } else {
-    titleElement.textContent = title || generateDefaultTitle();
+  const titleInput = document.getElementById('page-title-input');
+
+  const displayTitle = (currentView === 'list') ? '카스공대 혼테일 분배표' : (title || generateDefaultTitle());
+
+  if (titleElement) {
+    titleElement.textContent = displayTitle;
   }
 
-  const inlineTitleInput = document.getElementById('save-title-inline');
-  if (inlineTitleInput && currentView === 'editor') {
-    inlineTitleInput.value = title || generateDefaultTitle();
+  if (titleInput) {
+    titleInput.value = (currentView === 'list') ? '' : (title || generateDefaultTitle());
   }
 }
 
@@ -876,7 +875,11 @@ function updateTotals(distributionData = null) {
   const total = getTotalNet();
   const totalExpense = getTotalExpenses();
   const dropNetTotal = getTableNetSum('drop-table');
-  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+  const rateInput = document.getElementById('incentive-rate-input');
+  const currentRate = rateInput ? toNumber(rateInput.value, 1.0) : 1.0;
+  dropIncentiveRate = currentRate;
+
+  const dropIncentive = Math.floor(dropNetTotal * (currentRate / 100));
   const calculated = distributionData || calculateDistribution(total, totalExpense, dropIncentive);
   const totalIncentiveValue = calculated.totalIncentives;
   const totalDistribution = total - totalIncentiveValue - totalExpense;
@@ -926,21 +929,6 @@ function createRateControls(member, rateCell, rateValue) {
   rateInput.value = effectiveRate;
   rateInput.classList.add('distribution-input');
 
-  const controlContainer = document.createElement('div');
-  controlContainer.classList.add('control-buttons');
-
-  const increaseButton = document.createElement('button');
-  increaseButton.type = 'button';
-  increaseButton.textContent = '+5%';
-  increaseButton.classList.add('mini-button');
-  increaseButton.dataset.lockable = 'true';
-
-  const decreaseButton = document.createElement('button');
-  decreaseButton.type = 'button';
-  decreaseButton.textContent = '-5%';
-  decreaseButton.classList.add('mini-button');
-  decreaseButton.dataset.lockable = 'true';
-
   function commitRateChange(newValue) {
     const safeValue = Math.max(0, toNumber(newValue, 0));
     member.rate = safeValue;
@@ -952,30 +940,11 @@ function createRateControls(member, rateCell, rateValue) {
     commitRateChange(rateInput.value);
   });
 
-  increaseButton.addEventListener('click', () => {
-    if (isReadOnly) {
-      return;
-    }
-    commitRateChange(toNumber(rateInput.value, rateValue) + 5);
-  });
-
-  decreaseButton.addEventListener('click', () => {
-    if (isReadOnly) {
-      return;
-    }
-    commitRateChange(toNumber(rateInput.value, rateValue) - 5);
-  });
-
   if (isReadOnly || member.participating === false) {
     rateInput.disabled = true;
-    increaseButton.disabled = true;
-    decreaseButton.disabled = true;
   }
 
-  controlContainer.appendChild(increaseButton);
-  controlContainer.appendChild(decreaseButton);
   wrapper.appendChild(rateInput);
-  wrapper.appendChild(controlContainer);
   rateCell.appendChild(wrapper);
 }
 
@@ -993,8 +962,13 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
 
   const memberCount = members.length;
   const memberCountLabel = document.getElementById('member-count');
+
   const dropNetTotal = getTableNetSum('drop-table');
-  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+
+  const rateInput = document.getElementById('incentive-rate-input');
+  const currentRate = rateInput ? toNumber(rateInput.value, 1.0) : 1.0;
+  const dropIncentive = Math.floor(dropNetTotal * (currentRate / 100));
+
   const calculated = distributionData || calculateDistribution(totalNet, getTotalExpenses(), dropIncentive);
   if (memberCountLabel) {
     const validMembers = getValidMembers();
@@ -1043,8 +1017,28 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
       });
       actionCell.appendChild(removeButton);
 
-      nicknameCell.textContent = member.nickname;
-      jobCell.textContent = member.job;
+      if (isReadOnly) {
+        nicknameCell.textContent = member.nickname;
+        jobCell.textContent = member.job;
+      } else {
+        const nicknameInput = document.createElement('input');
+        nicknameInput.type = 'text';
+        nicknameInput.value = member.nickname;
+        nicknameInput.classList.add('distribution-input');
+        nicknameInput.addEventListener('change', () => {
+          member.nickname = nicknameInput.value.trim();
+        });
+        nicknameCell.appendChild(nicknameInput);
+
+        const jobInput = document.createElement('input');
+        jobInput.type = 'text';
+        jobInput.value = member.job;
+        jobInput.classList.add('distribution-input');
+        jobInput.addEventListener('change', () => {
+          member.job = jobInput.value.trim();
+        });
+        jobCell.appendChild(jobInput);
+      }
 
       const participantCheckbox = document.createElement('input');
       participantCheckbox.type = 'checkbox';
@@ -1225,6 +1219,30 @@ function updateDistributionTable(totalNet = getTotalNet(), distributionData = nu
   applyReadOnlyState();
 }
 
+async function updateMemberField(memberId, field, value) {
+  if (!memberId) {
+    return;
+  }
+  try {
+    const response = await fetchWithAuth(`/api/members/${memberId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ [field]: value }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: '공대원 정보를 수정하지 못했습니다.' }));
+      throw new Error(data.message || '공대원 정보를 수정하지 못했습니다.');
+    }
+
+    await fetchMembers();
+  } catch (error) {
+    throw error;
+  }
+}
+
 function renderMemberModal() {
   const tableBody = document.getElementById('member-management-body');
   if (!tableBody) {
@@ -1242,56 +1260,111 @@ function renderMemberModal() {
     emptyCell.style.textAlign = 'center';
     emptyRow.appendChild(emptyCell);
     tableBody.appendChild(emptyRow);
-    const outstandingTotalLabel = document.getElementById('outstanding-total');
-    if (outstandingTotalLabel) {
-      outstandingTotalLabel.textContent = '0';
-    }
     return;
   }
-
-  let outstandingTotal = 0;
 
   baseMembers.forEach((member, index) => {
     const row = document.createElement('tr');
 
+    // 순번 (displayOrder) 입력 칸
     const orderCell = document.createElement('td');
     orderCell.classList.add('order-cell');
-    const orderButtons = document.createElement('div');
-    orderButtons.classList.add('order-buttons');
-    const moveUpButton = document.createElement('button');
-    moveUpButton.type = 'button';
-    moveUpButton.textContent = '🔺';
-    moveUpButton.classList.add('order-button', 'secondary');
-    const moveDownButton = document.createElement('button');
-    moveDownButton.type = 'button';
-    moveDownButton.textContent = '🔻';
-    moveDownButton.classList.add('order-button', 'secondary');
-    const orderValue = document.createElement('span');
-    orderValue.classList.add('order-value');
-    orderValue.textContent = normalizeDisplayOrder(member.displayOrder, index + 1);
+    const orderInput = document.createElement('input');
+    orderInput.type = 'number';
+    orderInput.min = '1';
+    orderInput.step = '1';
+    orderInput.value = normalizeDisplayOrder(member.displayOrder, index + 1);
+    orderInput.classList.add('member-order-input');
+    orderInput.addEventListener('change', async () => {
+      const newValue = Math.max(1, Math.floor(toNumber(orderInput.value, index + 1)));
+      orderInput.value = newValue;
+      try {
+        await updateMemberField(member.id, 'displayOrder', newValue);
+      } catch (error) {
+        console.error(error);
+        orderInput.value = normalizeDisplayOrder(member.displayOrder, index + 1);
+        alert(error.message || '순번을 변경하지 못했습니다.');
+      }
+    });
+    orderCell.appendChild(orderInput);
 
-    moveUpButton.addEventListener('click', () => handleMemberReorder(index, -1));
-    moveDownButton.addEventListener('click', () => handleMemberReorder(index, 1));
+    // 리저순번 (legerOrder) 입력 칸
+    const legerOrderCell = document.createElement('td');
+    const legerOrderInput = document.createElement('input');
+    legerOrderInput.type = 'number';
+    legerOrderInput.min = '0';
+    legerOrderInput.step = '1';
+    legerOrderInput.value = toNumber(member.legerOrder, 0);
+    legerOrderInput.classList.add('member-leger-order-input');
+    legerOrderInput.addEventListener('change', async () => {
+      const newValue = Math.max(0, Math.floor(toNumber(legerOrderInput.value, 0)));
+      legerOrderInput.value = newValue;
+      try {
+        await updateMemberField(member.id, 'legerOrder', newValue);
+      } catch (error) {
+        console.error(error);
+        legerOrderInput.value = toNumber(member.legerOrder, 0);
+        alert(error.message || '리저순번을 변경하지 못했습니다.');
+      }
+    });
+    legerOrderCell.appendChild(legerOrderInput);
 
-    orderButtons.appendChild(moveUpButton);
-    orderButtons.appendChild(moveDownButton);
-    orderCell.appendChild(orderButtons);
-    orderCell.appendChild(orderValue);
-
+    // 닉네임 입력 칸
     const nicknameCell = document.createElement('td');
-    nicknameCell.textContent = member.nickname;
+    const nicknameInput = document.createElement('input');
+    nicknameInput.type = 'text';
+    nicknameInput.value = member.nickname || '';
+    nicknameInput.classList.add('member-nickname-input');
+    nicknameInput.addEventListener('change', async () => {
+      const newValue = nicknameInput.value.trim();
+      if (!newValue) {
+        nicknameInput.value = member.nickname || '';
+        alert('닉네임은 비워둘 수 없습니다.');
+        return;
+      }
+      try {
+        await updateMemberField(member.id, 'nickname', newValue);
+      } catch (error) {
+        console.error(error);
+        nicknameInput.value = member.nickname || '';
+        alert(error.message || '닉네임을 변경하지 못했습니다.');
+      }
+    });
+    nicknameCell.appendChild(nicknameInput);
 
+    // 직업 입력 칸
     const jobCell = document.createElement('td');
-    jobCell.textContent = member.job;
+    const jobInput = document.createElement('input');
+    jobInput.type = 'text';
+    jobInput.value = member.job || '';
+    jobInput.classList.add('member-job-input');
+    jobInput.addEventListener('change', async () => {
+      const newValue = jobInput.value.trim();
+      if (!newValue) {
+        jobInput.value = member.job || '';
+        alert('직업은 비워둘 수 없습니다.');
+        return;
+      }
+      try {
+        await updateMemberField(member.id, 'job', newValue);
+      } catch (error) {
+        console.error(error);
+        jobInput.value = member.job || '';
+        alert(error.message || '직업을 변경하지 못했습니다.');
+      }
+    });
+    jobCell.appendChild(jobInput);
 
+    // 분배인원 체크박스
     const includedCell = document.createElement('td');
+    includedCell.classList.add('checkbox-cell');
     const includedCheckbox = document.createElement('input');
     includedCheckbox.type = 'checkbox';
     includedCheckbox.checked = member.included !== false;
     includedCheckbox.addEventListener('change', async () => {
       const newValue = includedCheckbox.checked;
       try {
-        await updateMemberIncluded(member.id, newValue);
+        await updateMemberField(member.id, 'included', newValue);
       } catch (error) {
         console.error(error);
         includedCheckbox.checked = !newValue;
@@ -1300,32 +1373,24 @@ function renderMemberModal() {
     });
     includedCell.appendChild(includedCheckbox);
 
-    const outstandingCell = document.createElement('td');
-    const outstandingValue = Math.max(0, toNumber(member.outstandingAmount, 0));
-    outstandingCell.textContent = formatCurrency(outstandingValue);
-    outstandingTotal += outstandingValue;
-
+    // 삭제 버튼
     const actionCell = document.createElement('td');
     const deleteButton = document.createElement('button');
-    deleteButton.textContent = '삭제';
-    deleteButton.classList.add('danger');
+    deleteButton.type = 'button';
+    deleteButton.textContent = '⛔';
+    deleteButton.classList.add('icon-button', 'danger-text');
     deleteButton.addEventListener('click', () => deleteMember(member.id));
     actionCell.appendChild(deleteButton);
 
     row.appendChild(orderCell);
+    row.appendChild(legerOrderCell);
     row.appendChild(nicknameCell);
     row.appendChild(jobCell);
     row.appendChild(includedCell);
-    row.appendChild(outstandingCell);
     row.appendChild(actionCell);
 
     tableBody.appendChild(row);
   });
-
-  const outstandingTotalLabel = document.getElementById('outstanding-total');
-  if (outstandingTotalLabel) {
-    outstandingTotalLabel.textContent = formatCurrency(outstandingTotal);
-  }
 }
 
 function openMemberModal() {
@@ -1438,10 +1503,12 @@ async function fetchMembers() {
       const included = member.included !== false;
       const outstandingAmount = Math.max(0, toNumber(member.outstandingAmount, 0));
       const displayOrder = normalizeDisplayOrder(member.displayOrder, index + 1);
+      const legerOrder = Math.max(0, toNumber(member.legerOrder, 0));
       return {
         ...member,
         included,
         displayOrder,
+        legerOrder,
         outstandingAmount,
       };
     });
@@ -1578,18 +1645,52 @@ function applyReadOnlyState() {
     button.disabled = isReadOnly;
   });
 
+  const incentiveInput = document.getElementById('incentive-rate-input');
+  if (incentiveInput) {
+    incentiveInput.disabled = isReadOnly;
+  }
+
+  const managerInput = document.getElementById('manager-input');
+  if (managerInput) {
+    managerInput.disabled = isReadOnly;
+  }
+
   editorPage.querySelectorAll('[data-hide-when-readonly]').forEach((element) => {
     element.classList.toggle('hidden', isReadOnly);
   });
 }
 
 function updateEditModeButton() {
-  const editModeButton = document.getElementById('enter-edit-mode');
-  if (!editModeButton) {
+  const editBtn = document.getElementById('header-edit-btn');
+  const viewBtn = document.getElementById('header-view-mode-btn');
+  const saveBtn = document.getElementById('header-save-btn');
+  const titleText = document.getElementById('page-title');
+  const titleInput = document.getElementById('page-title-input');
+
+  if (currentView !== 'editor') {
+    if (editBtn) editBtn.classList.add('hidden');
+    if (viewBtn) viewBtn.classList.add('hidden');
+    if (saveBtn) saveBtn.classList.add('hidden');
+    if (titleText) titleText.classList.remove('hidden');
+    if (titleInput) titleInput.classList.add('hidden');
     return;
   }
-  const shouldShow = currentView === 'editor' && isReadOnly && currentDistributionId !== null;
-  editModeButton.classList.toggle('hidden', !shouldShow);
+
+  if (isReadOnly) {
+    // View Mode
+    if (editBtn) editBtn.classList.remove('hidden');
+    if (viewBtn) viewBtn.classList.add('hidden');
+    if (saveBtn) saveBtn.classList.remove('hidden'); // Show save button in view mode too
+    if (titleText) titleText.classList.remove('hidden');
+    if (titleInput) titleInput.classList.add('hidden');
+  } else {
+    // Edit Mode
+    if (editBtn) editBtn.classList.add('hidden');
+    if (viewBtn) viewBtn.classList.remove('hidden');
+    if (saveBtn) saveBtn.classList.remove('hidden');
+    if (titleText) titleText.classList.add('hidden');
+    if (titleInput) titleInput.classList.remove('hidden');
+  }
 }
 
 function setReadOnly(readOnly) {
@@ -1617,7 +1718,16 @@ function prepareNewDistribution() {
 
   syncMembersWithBaseOrder();
 
+  const managerInput = document.getElementById('manager-input');
+  if (managerInput) {
+    managerInput.value = '';
+  }
   setExpenses([]);
+  dropIncentiveRate = 1.0;
+  const rateInput = document.getElementById('incentive-rate-input');
+  if (rateInput) {
+    rateInput.value = '1';
+  }
 
   populateSaleTable('drop-table', dropSaleOptions, [], DEFAULT_SALE_ROWS);
   populateSaleTable(
@@ -1685,6 +1795,22 @@ function populateFromDistributionData(payload = {}) {
 
   populateSaleTable('drop-table', dropSaleOptions, dropData, DEFAULT_SALE_ROWS);
   populateSaleTable('guest-table', guestSaleOptions, guestData, guestDefaultItems.length);
+
+  if (payload.dropIncentiveRate !== undefined) {
+    dropIncentiveRate = toNumber(payload.dropIncentiveRate, 1.0);
+  } else {
+    dropIncentiveRate = 1.0;
+  }
+  const rateInput = document.getElementById('incentive-rate-input');
+  if (rateInput) {
+    rateInput.value = String(dropIncentiveRate);
+  }
+
+  const managerInput = document.getElementById('manager-input');
+  if (managerInput) {
+    managerInput.value = payload.manager || '';
+  }
+
   syncMembersWithBaseOrder();
   updateTotals();
 }
@@ -1763,11 +1889,15 @@ function renderDistributionList(distributions) {
   distributions.forEach((distribution) => {
     const row = document.createElement('tr');
 
+    const createdCell = document.createElement('td');
+    createdCell.textContent = formatDateTime(distribution.created_at);
+
     const titleCell = document.createElement('td');
     titleCell.textContent = distribution.title;
 
-    const createdCell = document.createElement('td');
-    createdCell.textContent = formatDateTime(distribution.created_at);
+    const managerCell = document.createElement('td');
+    const managerName = distribution.manager || '-';
+    managerCell.textContent = managerName;
 
     const statusCell = document.createElement('td');
     const paidTrueCount = Number(distribution.paid_true_count) || 0;
@@ -1789,8 +1919,9 @@ function renderDistributionList(distributions) {
     actionCell.appendChild(viewButton);
     actionCell.appendChild(deleteButton);
 
-    row.appendChild(titleCell);
     row.appendChild(createdCell);
+    row.appendChild(titleCell);
+    row.appendChild(managerCell);
     row.appendChild(statusCell);
     row.appendChild(actionCell);
 
@@ -1867,10 +1998,14 @@ function collectDistributionPayload() {
   const totalNet = getTotalNet();
   const totalExpense = getTotalExpenses();
   const dropNetTotal = getTableNetSum('drop-table');
-  const dropIncentive = Math.floor(dropNetTotal * 0.01);
+  const dropIncentive = Math.floor(dropNetTotal * (dropIncentiveRate / 100));
   const distributionData = calculateDistribution(totalNet, totalExpense, dropIncentive);
 
+  const managerInput = document.getElementById('manager-input');
+  const manager = managerInput ? managerInput.value.trim() : '';
+
   return {
+    manager,
     dropSales: getSaleTableData('drop-table', dropSaleOptions),
     guestSales: getSaleTableData('guest-table', guestSaleOptions),
     expenses: expenses.map((expense) => {
@@ -1908,11 +2043,12 @@ function collectDistributionPayload() {
       unitAmount: distributionData.unitAmount,
       totalWeight: distributionData.totalWeight,
     },
+    dropIncentiveRate,
   };
 }
 
 async function handleSaveDistribution() {
-  const titleInput = document.getElementById('save-title-inline');
+  const titleInput = document.getElementById('page-title-input');
   if (!titleInput) {
     return;
   }
@@ -1981,6 +2117,13 @@ function initTables() {
         createTableRow(guestTableBody, guestSaleOptions, {});
         applySaleTablesReadOnlyState();
       }
+    });
+  }
+
+  const incentiveRateInput = document.getElementById('incentive-rate-input');
+  if (incentiveRateInput) {
+    incentiveRateInput.addEventListener('input', () => {
+      updateTotals();
     });
   }
 }
@@ -2089,9 +2232,9 @@ function initMemberControls() {
     });
   }
 
-  const openSaveModalButton = document.getElementById('open-save-modal');
-  if (openSaveModalButton) {
-    openSaveModalButton.addEventListener('click', () => {
+  const saveBtn = document.getElementById('header-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
       handleSaveDistribution();
     });
   }
@@ -2110,14 +2253,24 @@ function initMemberControls() {
     });
   }
 
-  const enterEditModeButton = document.getElementById('enter-edit-mode');
-  if (enterEditModeButton) {
-    enterEditModeButton.addEventListener('click', () => {
+  const editBtn = document.getElementById('header-edit-btn');
+  if (editBtn) {
+    editBtn.addEventListener('click', () => {
       if (!isReadOnly) {
         return;
       }
       setReadOnly(false);
       updateTotals();
+    });
+  }
+
+  const viewBtn = document.getElementById('header-view-mode-btn');
+  if (viewBtn) {
+    viewBtn.addEventListener('click', () => {
+      if (isReadOnly) {
+        return;
+      }
+      setReadOnly(true);
     });
   }
 

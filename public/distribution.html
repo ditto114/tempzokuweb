@@ -1,24 +1,38 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>카스공대 분배표</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div class="container">
-    <nav class="top-nav">
-      <a href="/" class="secondary">메인으로</a>
-      <div class="top-nav-actions">
-        <button id="nav-list" class="secondary">목록으로</button>
-        <button id="logout-button" class="secondary">로그아웃</button>
-        <a href="/timers.html" class="primary">혼테일 타이머</a>
-      </div>
-    </nav>
+    <div class="sticky-header">
+      <nav class="top-nav">
+        <div class="nav-left">
+          <a href="/" class="secondary">메인으로</a>
+        </div>
+        <div class="nav-center">
+          <button id="header-edit-btn" class="secondary hidden">수정</button>
+          <button id="header-view-mode-btn" class="secondary hidden">보기</button>
+          <button id="header-save-btn" class="primary hidden">저장</button>
+          <span id="save-feedback" class="save-status hidden" aria-live="polite">저장 완료</span>
+        </div>
+        <div class="nav-right">
+          <button id="nav-list" class="secondary">목록으로</button>
+          <button id="logout-button" class="secondary">로그아웃</button>
+        </div>
+      </nav>
+    </div>
 
     <header>
-      <h1 id="page-title">카스공대 분배표</h1>
+      <div class="header-title-row">
+        <h1 id="page-title">카스공대 분배표</h1>
+        <input id="page-title-input" class="hidden" type="text" placeholder="제목을 입력하세요" />
+      </div>
       <p></p>
     </header>
 
@@ -35,15 +49,16 @@
         <table>
           <thead>
             <tr>
-              <th>제목</th>
               <th>작성일자</th>
+              <th>제목</th>
+              <th>분배담당</th>
               <th>지급현황</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="distribution-list-body">
             <tr>
-              <td colspan="4" class="empty">저장된 분배표가 없습니다.</td>
+              <td colspan="5" class="empty">저장된 분배표가 없습니다.</td>
             </tr>
           </tbody>
         </table>
@@ -52,7 +67,15 @@
       <div id="editor-page" class="hidden">
         <div class="dual-layout">
           <section class="card">
-            <h2>드랍템 수익</h2>
+            <div class="card-header">
+              <h2>드랍템 수익</h2>
+              <div class="input-with-label">
+                <label for="incentive-rate-input">분배인센티브:</label>
+                <input id="incentive-rate-input" type="number" step="0.1" min="0" max="100" value="1"
+                  data-lockable="true" />
+                <span>%</span>
+              </div>
+            </div>
             <table id="drop-table">
               <thead>
                 <tr>
@@ -65,7 +88,8 @@
               <tbody>
               </tbody>
             </table>
-            <button id="add-drop-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행 추가</button>
+            <button id="add-drop-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행
+              추가</button>
           </section>
 
           <section class="card">
@@ -82,16 +106,23 @@
               <tbody>
               </tbody>
             </table>
-            <button id="add-guest-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행 추가</button>
+            <button id="add-guest-row" class="secondary" data-lockable="true" data-hide-when-readonly="true">행
+              추가</button>
           </section>
         </div>
 
         <section class="card">
           <div class="card-header">
             <h2>분배표</h2>
+            <div class="input-with-label">
+              <label for="manager-input">분배담당:</label>
+              <input id="manager-input" type="text" class="manager-input" data-lockable="true" />
+            </div>
             <div class="card-actions">
-              <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true" data-hide-when-readonly="true">용병 추가</button>
-              <button id="open-expense-modal" class="secondary mini-button" data-hide-when-readonly="true">지출비용 관리</button>
+              <button id="add-mercenary-row" class="secondary mini-button" data-lockable="true"
+                data-hide-when-readonly="true">용병 추가</button>
+              <button id="open-expense-modal" class="secondary mini-button" data-hide-when-readonly="true">지출비용
+                관리</button>
             </div>
           </div>
 
@@ -122,21 +153,17 @@
             </thead>
             <tbody>
             </tbody>
-            </table>
+          </table>
         </section>
 
-        <div class="save-actions">
-          <button id="enter-edit-mode" class="secondary hidden">수정</button>
-          <input id="save-title-inline" type="text" placeholder="제목" data-always-enabled="true" />
-          <button id="open-save-modal" class="primary" data-always-enabled="true">저장</button>
-          <span id="save-feedback" class="save-status hidden" aria-live="polite">저장 완료</span>
-        </div>
+
       </div>
     </main>
   </div>
 
   <div id="modal-backdrop" class="modal-backdrop hidden"></div>
-  <div id="payment-input-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="payment-input-modal-title">
+  <div id="payment-input-modal" class="modal hidden" role="dialog" aria-modal="true"
+    aria-labelledby="payment-input-modal-title">
     <div class="modal-content">
       <h3 id="payment-input-modal-title">지급액 추가</h3>
       <label for="payment-input-value">추가할 지급액을 입력하세요</label>
@@ -162,39 +189,30 @@
 
   <div id="member-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="member-modal-title">
     <div class="modal-content member-modal">
-      <div class="modal-header">
-        <h3 id="member-modal-title">공대원 관리</h3>
-        <button id="close-member-modal" class="secondary">닫기</button>
-      </div>
-      <form id="member-add-form" class="member-add-form">
-        <div class="form-row">
-          <label for="member-nickname-input">닉네임</label>
-          <input id="member-nickname-input" type="text" placeholder="닉네임" required />
-        </div>
-        <div class="form-row">
-          <label for="member-job-input">직업</label>
-          <input id="member-job-input" type="text" placeholder="직업" required />
-        </div>
-        <div class="form-actions">
-          <button type="submit" class="primary">추가</button>
-        </div>
-      </form>
       <div class="member-table-wrapper">
         <table>
           <thead>
             <tr>
               <th>순번</th>
+              <th>리저순번</th>
               <th>닉네임</th>
               <th>직업</th>
-              <th>분배인원</th>
-              <th>미수령 분배금</th>
+              <th>분배</th>
               <th>삭제</th>
             </tr>
           </thead>
           <tbody id="member-management-body">
           </tbody>
         </table>
-        <div class="totals-row member-outstanding-total">미수령 분배금 합계: <span id="outstanding-total">0</span></div>
+
+      </div>
+      <div class="member-modal-footer">
+        <form id="member-add-form" class="member-add-form-inline">
+          <input id="member-nickname-input" type="text" placeholder="닉네임" required class="compact-input" />
+          <input id="member-job-input" type="text" placeholder="직업" required class="compact-input" />
+          <button type="submit" class="primary">추가</button>
+        </form>
+        <button id="close-member-modal" class="secondary">닫기</button>
       </div>
     </div>
   </div>
@@ -224,4 +242,5 @@
 
   <script src="script.js"></script>
 </body>
+
 </html>

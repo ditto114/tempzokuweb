@@ -212,7 +212,7 @@ button.danger {
   color: #ffffff;
 }
 
-table td button + button {
+table td button+button {
   margin-left: 8px;
 }
 
@@ -541,9 +541,11 @@ button:disabled {
 }
 
 .member-modal {
-  width: min(90vw, 640px);
-  max-height: min(90vh, 720px);
-  overflow: hidden;
+  width: min(90vw, 720px);
+  height: 80vh;
+  max-height: 800px;
+  display: flex;
+  flex-direction: column;
 }
 
 .expense-modal {
@@ -581,10 +583,34 @@ button:disabled {
   }
 }
 
+.member-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+
+.member-add-form-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.compact-input {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
 .member-table-wrapper {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  margin-bottom: 0;
 }
 
 .member-table-wrapper table {
@@ -592,26 +618,23 @@ button:disabled {
 }
 
 .order-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.order-buttons {
-  display: flex;
-  gap: 4px;
-}
-
-.order-button {
-  padding: 6px 8px;
-  line-height: 1;
-}
-
-.order-value {
-  min-width: 24px;
   text-align: center;
-  font-weight: 600;
+}
+
+.member-order-input,
+.member-leger-order-input {
+  width: 60px;
+  text-align: center;
+}
+
+.member-nickname-input,
+.member-job-input {
+  width: 100%;
+  min-width: 80px;
+}
+
+.member-table-wrapper .checkbox-cell {
+  text-align: center;
 }
 
 .modal-footer {
@@ -1872,4 +1895,124 @@ button:disabled {
   .auth-container {
     padding: 32px 24px;
   }
+}
+
+/* New Header Styles */
+.header-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.header-title-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#page-title-input {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: bold;
+  max-width: 600px;
+  margin: 0 auto 8px;
+}
+
+/* Sticky Header Wrapper */
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: var(--bg);
+  padding: 12px 0 0;
+  /* Reduced bottom padding */
+  margin-bottom: 24px;
+}
+
+/* Ensure proper spacing for the nav inside sticky header */
+.sticky-header .top-nav {
+  margin-bottom: 0;
+  padding-bottom: 12px;
+}
+
+.sticky-header .header-actions {
+  margin-bottom: 0;
+}
+
+.input-with-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  color: var(--secondary);
+}
+
+.input-with-label input {
+  width: 60px;
+  text-align: right;
+  padding: 4px 8px;
+}
+
+.input-with-label .manager-input {
+  width: 120px;
+  text-align: left;
+}
+
+/* Navigation Layout */
+.top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nav-left,
+.nav-right {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  /* Take up available space */
+}
+
+.nav-right {
+  justify-content: flex-end;
+}
+
+.nav-center {
+  display: flex;
+  /* Always flex to keep buttons together */
+  gap: 12px;
+  justify-content: center;
+  flex: 2;
+  /* Center section takes more space if needed */
+  min-width: 0;
+  /* Prevent overflow */
+}
+
+/* Manager Input Positioning */
+.card-header {
+  position: relative;
+  /* Ensure relative positioning for absolute children if we were to use them, but flex is safer. 
+     The current HTML structure has h2, div.input-with-label, div.card-actions.
+     We want "분배담당" (input-with-label) to be on the right.
+  */
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.card-header h2 {
+  margin-right: auto;
+  /* Push everything else to the right */
+}
+
+.card-header .input-with-label {
+  margin-left: auto;
+  /* Push to the right, but before actions if any */
+  margin-right: 16px;
+}
+
+.card-header .card-actions {
+  margin-left: 0;
 }
