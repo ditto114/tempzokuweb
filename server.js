@@ -40,6 +40,24 @@ const gridSettingsByChannel = new Map([
 ]);
 const LOGIN_PAGE_PATH = '/login.html';
 
+// DB 초기화 완료 상태 추적 (Vercel cold start 대응)
+let dbInitialized = false;
+let dbInitPromise = null;
+
+async function ensureDbInitialized(req, res, next) {
+  if (dbInitialized) {
+    return next();
+  }
+  // 초기화 대기 (최대 10초)
+  for (let i = 0; i < 100; i++) {
+    if (dbInitialized) {
+      return next();
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return res.status(503).json({ message: '서버 초기화 중입니다. 잠시 후 다시 시도해주세요.' });
+}
+
 function normalizeChannelCode(raw) {
   if (typeof raw !== 'string') {
     return null;
@@ -1006,7 +1024,7 @@ function getTimerById(channelCode, id) {
   return channelTimers.get(numericId) ?? null;
 }
 
-app.get('/api/timers', requireChannel, (req, res) => {
+app.get('/api/timers', ensureDbInitialized, requireChannel, (req, res) => {
   const payload = getTimersPayload(req.channelCode);
   if (!payload) {
     return res.status(404).json({ message: '해당 채널의 타이머를 찾을 수 없습니다.' });
@@ -1014,7 +1032,7 @@ app.get('/api/timers', requireChannel, (req, res) => {
   return res.json(payload);
 });
 
-app.get('/api/timers/stream', requireChannel, (req, res) => {
+app.get('/api/timers/stream', ensureDbInitialized, requireChannel, (req, res) => {
   const { channelCode } = req;
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1430,6 +1448,7 @@ if (!process.env.VERCEL) {
 
   initializeDatabase()
     .then(() => {
+      dbInitialized = true;
       server.listen(PORT, () => {
         console.log(`Server is running on port ${PORT}`);
       });
@@ -1441,9 +1460,14 @@ if (!process.env.VERCEL) {
 } else {
   // Vercel 환경: DB 초기화만 수행하고 app을 export
   console.log('Vercel 환경에서 실행 중 - Discord 봇 및 백그라운드 작업이 비활성화됩니다.');
-  initializeDatabase().catch((error) => {
-    console.error('Database initialization failed:', error);
-  });
+  initializeDatabase()
+    .then(() => {
+      dbInitialized = true;
+      console.log('✅ DB 초기화 완료');
+    })
+    .catch((error) => {
+      console.error('Database initialization failed:', error);
+    });
 }
 
 // Vercel Serverless Function용 export

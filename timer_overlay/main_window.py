@@ -437,6 +437,11 @@ class MainWindow(QMainWindow):
             state.server_clock_offset_ms = self._server_clock_offset_ms
             updated_states[state.id] = state
 
+        # 빈 응답이고 기존 타이머가 있으면 상태 유지 (서버 일시 장애 대응)
+        if len(updated_states) == 0 and len(self.timer_states) > 0:
+            logger.debug("빈 타이머 응답 무시 (기존 %d개 타이머 유지)", len(self.timer_states))
+            return
+
         self.timer_states = updated_states
         self._update_visible_overlays()
         self._cleanup_missing_timers(updated_states)
