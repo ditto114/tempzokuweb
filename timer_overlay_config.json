@@ -3,7 +3,36 @@
   "server_port": 47984,
   "server_url": "https://tempzokuweb.vercel.app",
   "channel_code": "ca01",
-  "timer_positions": {},
+  "timer_positions": {
+    "41": [
+      100,
+      100
+    ],
+    "47": [
+      100,
+      100
+    ],
+    "48": [
+      208,
+      77
+    ],
+    "69": [
+      309,
+      87
+    ],
+    "50": [
+      100,
+      100
+    ],
+    "51": [
+      535,
+      78
+    ],
+    "52": [
+      415,
+      88
+    ]
+  },
   "overlay_opacity": 85,
   "timer_hotkeys": {},
   "overlay_scale": 1

@@ -1702,9 +1702,17 @@ function updateTimerDisplays() {
 
     // 클라이언트 측 타이머 만료 처리: 진행 중인데 남은 시간이 0이면 상태 갱신
     if (timer.isRunning && remaining === 0) {
-      timer.isRunning = false;
-      timer.remainingMs = 0;
-      timer.endTime = null;
+      if (timer.repeatEnabled) {
+        // 반복 활성화: 타이머 재시작
+        timer.remainingMs = timer.durationMs;
+        timer.endTime = getEffectiveNow(now) + timer.durationMs;
+        // 서버에 동기화 요청 (배경에서 처리)
+        resetTimer(timer.id).catch(() => { });
+      } else {
+        timer.isRunning = false;
+        timer.remainingMs = 0;
+        timer.endTime = null;
+      }
       needsRender = true;
     }
 
