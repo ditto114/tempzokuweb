@@ -1706,8 +1706,8 @@ function updateTimerDisplays() {
         // 반복 활성화: 타이머 재시작
         timer.remainingMs = timer.durationMs;
         timer.endTime = getEffectiveNow(now) + timer.durationMs;
-        // 서버에 동기화 요청 (배경에서 처리)
-        resetTimer(timer.id).catch(() => { });
+        // 서버에 재시작 요청 (배경에서 처리)
+        startTimer(timer.id).catch(() => { });
       } else {
         timer.isRunning = false;
         timer.remainingMs = 0;
