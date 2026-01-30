@@ -1366,73 +1366,85 @@ app.post('/api/timers/grid-settings', requireChannel, async (req, res) => {
   res.json({ gridSettings: getGridSettings(channelCode) });
 });
 
-setInterval(async () => {
-  const now = Date.now();
-  const updateTasks = [];
-  const changedChannels = new Set();
+// Vercel 환경에서는 Discord 봇, setInterval 등 지속적인 프로세스를 실행하지 않습니다.
+if (!process.env.VERCEL) {
+  setInterval(async () => {
+    const now = Date.now();
+    const updateTasks = [];
+    const changedChannels = new Set();
 
-  timersByChannel.forEach((channelTimers, channelCode) => {
-    if (!channelTimers || channelTimers.size === 0) {
-      return;
-    }
-
-    for (const timer of channelTimers.values()) {
-      if (!timer.isRunning || typeof timer.endTime !== 'number') {
-        continue;
+    timersByChannel.forEach((channelTimers, channelCode) => {
+      if (!channelTimers || channelTimers.size === 0) {
+        return;
       }
 
-      const remaining = timer.endTime - now;
-      if (remaining > 0) {
-        continue;
+      for (const timer of channelTimers.values()) {
+        if (!timer.isRunning || typeof timer.endTime !== 'number') {
+          continue;
+        }
+
+        const remaining = timer.endTime - now;
+        if (remaining > 0) {
+          continue;
+        }
+
+        if (timer.repeatEnabled) {
+          timer.remainingMs = timer.durationMs;
+          timer.endTime = now + timer.durationMs;
+          timer.updatedAt = now;
+          updateTasks.push(persistTimer(timer));
+        } else {
+          timer.isRunning = false;
+          timer.remainingMs = 0;
+          timer.endTime = null;
+          timer.updatedAt = now;
+          updateTasks.push(persistTimer(timer));
+        }
+        changedChannels.add(channelCode);
       }
-
-      if (timer.repeatEnabled) {
-        timer.remainingMs = timer.durationMs;
-        timer.endTime = now + timer.durationMs;
-        timer.updatedAt = now;
-        updateTasks.push(persistTimer(timer));
-      } else {
-        timer.isRunning = false;
-        timer.remainingMs = 0;
-        timer.endTime = null;
-        timer.updatedAt = now;
-        updateTasks.push(persistTimer(timer));
-      }
-      changedChannels.add(channelCode);
-    }
-  });
-
-  if (updateTasks.length > 0) {
-    await Promise.allSettled(updateTasks);
-  }
-
-  changedChannels.forEach((channelCode) => {
-    broadcastTimers(channelCode, getTimersPayload(channelCode, now));
-  });
-}, 250);
-
-setInterval(() => {
-  const keepAliveMessage = ':keep-alive\n\n';
-  for (const clients of timerClientsByChannel.values()) {
-    for (const client of clients) {
-      try {
-        client.write(keepAliveMessage);
-      } catch (error) {
-        clients.delete(client);
-      }
-    }
-  }
-}, 20000);
-
-startDiscordBot(process.env.DISCORD_TOKEN);
-
-initializeDatabase()
-  .then(() => {
-    server.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
     });
-  })
-  .catch((error) => {
+
+    if (updateTasks.length > 0) {
+      await Promise.allSettled(updateTasks);
+    }
+
+    changedChannels.forEach((channelCode) => {
+      broadcastTimers(channelCode, getTimersPayload(channelCode, now));
+    });
+  }, 250);
+
+  setInterval(() => {
+    const keepAliveMessage = ':keep-alive\n\n';
+    for (const clients of timerClientsByChannel.values()) {
+      for (const client of clients) {
+        try {
+          client.write(keepAliveMessage);
+        } catch (error) {
+          clients.delete(client);
+        }
+      }
+    }
+  }, 20000);
+
+  startDiscordBot(process.env.DISCORD_TOKEN);
+
+  initializeDatabase()
+    .then(() => {
+      server.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error('Database initialization failed:', error);
+      process.exit(1);
+    });
+} else {
+  // Vercel 환경: DB 초기화만 수행하고 app을 export
+  console.log('Vercel 환경에서 실행 중 - Discord 봇 및 백그라운드 작업이 비활성화됩니다.');
+  initializeDatabase().catch((error) => {
     console.error('Database initialization failed:', error);
-    process.exit(1);
   });
+}
+
+// Vercel Serverless Function용 export
+module.exports = app;
