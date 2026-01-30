@@ -96,6 +96,8 @@ let pendingShortcutTimerId = null;
 let shortcutModalElements = null;
 let shortcutModalKeyListener = null;
 let viewModeDragState = null;
+let sseReconnectTimeout = null;
+let sseReconnectDelay = 1000;
 
 function clampTimerDuration(value) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -1533,7 +1535,7 @@ function createResetSlider(timer, { labelText } = {}) {
       isProcessing = true;
       knob.disabled = true;
       resetTimer(timer.id)
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => {
           isProcessing = false;
           knob.disabled = false;
@@ -1689,6 +1691,7 @@ function createDropSlot(index) {
 
 function updateTimerDisplays() {
   const now = Date.now();
+  let needsRender = false;
   timerDisplays.forEach((element, id) => {
     const timer = timers.get(id);
     if (!timer || !element) {
@@ -1696,6 +1699,15 @@ function updateTimerDisplays() {
     }
     const remaining = getTimerRemaining(timer, now);
     element.textContent = formatTimerDisplay(remaining);
+
+    // 클라이언트 측 타이머 만료 처리: 진행 중인데 남은 시간이 0이면 상태 갱신
+    if (timer.isRunning && remaining === 0) {
+      timer.isRunning = false;
+      timer.remainingMs = 0;
+      timer.endTime = null;
+      needsRender = true;
+    }
+
     const isFinished = !timer.isRunning && remaining === 0;
     if (isFinished) {
       element.classList.add('finished');
@@ -1720,6 +1732,11 @@ function updateTimerDisplays() {
       progressElement.classList.toggle('paused', !timer.isRunning);
     }
   });
+
+  // 만료된 타이머가 있으면 UI 다시 렌더링 (버튼 상태 갱신)
+  if (needsRender) {
+    renderTimers();
+  }
 }
 
 async function fetchTimers() {
@@ -2068,6 +2085,10 @@ function connectStream() {
     updateStatus('채널 코드가 필요합니다.', true);
     return;
   }
+  if (sseReconnectTimeout) {
+    clearTimeout(sseReconnectTimeout);
+    sseReconnectTimeout = null;
+  }
   if (eventSource) {
     eventSource.close();
   }
@@ -2076,6 +2097,7 @@ function connectStream() {
 
   eventSource.onopen = () => {
     updateStatus('실시간으로 연결되었습니다.');
+    sseReconnectDelay = 1000; // 연결 성공 시 재연결 딜레이 초기화
   };
 
   eventSource.onmessage = (event) => {
@@ -2091,7 +2113,16 @@ function connectStream() {
   };
 
   eventSource.onerror = () => {
-    updateStatus('연결이 불안정합니다. 잠시 후 다시 시도해주세요.', true);
+    updateStatus('연결이 불안정합니다. 잠시 후 다시 시도합니다...', true);
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    // 지수 백오프로 재연결 (최대 30초)
+    sseReconnectTimeout = setTimeout(() => {
+      connectStream();
+    }, sseReconnectDelay);
+    sseReconnectDelay = Math.min(sseReconnectDelay * 1.5, 30000);
   };
 }
 

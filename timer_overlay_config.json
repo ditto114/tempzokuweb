@@ -1,0 +1,10 @@
+{
+  "server_host": "218.234.230.188",
+  "server_port": 47984,
+  "server_url": "https://tempzokuweb.vercel.app",
+  "channel_code": "ca01",
+  "timer_positions": {},
+  "overlay_opacity": 85,
+  "timer_hotkeys": {},
+  "overlay_scale": 1
+}

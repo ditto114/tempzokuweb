@@ -18,11 +18,15 @@ logger = logging.getLogger(__name__)
 class ServerSettings:
     """서버 접속 정보를 담는 데이터 클래스."""
 
-    host: str
-    port: int
+    host: str = ""
+    port: int = 0
+    url: str = ""  # HTTPS URL (예: https://your-app.vercel.app)
 
     @property
     def base_url(self) -> str:
+        # URL이 설정되어 있으면 우선 사용
+        if self.url:
+            return self.url.rstrip("/")
         return f"http://{self.host}:{self.port}"
 
 
@@ -226,13 +230,14 @@ class TimerService(QObject):
             return False
 
     def _run(self) -> None:
+        """Polling 방식으로 서버에서 타이머 상태를 주기적으로 가져온다."""
         backoff = 2.0
+        poll_interval = 0.5  # 0.5초마다 폴링 (실시간성 향상)
         while self._running.is_set():
             if not self._channel_code:
                 self.connection_state_changed.emit(False, "채널 코드가 설정되지 않았습니다.")
                 self._running.clear()
                 break
-            self.connection_state_changed.emit(False, "서버에 연결하는 중입니다…")
             session = requests.Session()
             self._stream_session = session
             try:
@@ -240,8 +245,14 @@ class TimerService(QObject):
                 if payload is not None:
                     self.connection_state_changed.emit(True, "타이머 정보를 불러왔습니다.")
                     self.timers_updated.emit(payload)
-                self._listen_stream(session)
-                backoff = 2.0
+                    backoff = 2.0
+                else:
+                    self.connection_state_changed.emit(False, "타이머 정보를 불러오지 못했습니다.")
+                # Polling 간격 대기
+                for _ in range(int(poll_interval * 10)):
+                    if not self._running.is_set():
+                        break
+                    time.sleep(0.1)
             except requests.HTTPError as exc:
                 if not self._running.is_set():
                     break
@@ -250,7 +261,7 @@ class TimerService(QObject):
                     self.connection_state_changed.emit(False, "채널 코드를 확인해주세요.")
                     self._running.clear()
                     break
-                logger.warning("타이머 스트림 연결 실패: %s", exc)
+                logger.warning("타이머 조회 실패: %s", exc)
                 message = "서버 연결이 끊어졌습니다. 잠시 후 다시 시도합니다."
                 self.connection_state_changed.emit(False, message)
                 time.sleep(min(backoff, 30.0))
@@ -258,7 +269,7 @@ class TimerService(QObject):
             except requests.RequestException as exc:
                 if not self._running.is_set():
                     break
-                logger.warning("타이머 스트림 연결 실패: %s", exc)
+                logger.warning("타이머 조회 실패: %s", exc)
                 message = "서버 연결이 끊어졌습니다. 잠시 후 다시 시도합니다."
                 self.connection_state_changed.emit(False, message)
                 time.sleep(min(backoff, 30.0))

@@ -101,6 +101,7 @@ class AppConfig:
 
     server_host: str = "218.234.230.188"
     server_port: int = 47984
+    server_url: str = ""  # HTTPS URL (예: https://your-app.vercel.app)
     channel_code: str = ""
     timer_positions: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     timer_hotkeys: Dict[str, str] = field(default_factory=dict)
@@ -141,6 +142,7 @@ class AppConfig:
         return cls(
             server_host=data.get("server_host", "218.234.230.188"),
             server_port=int(data.get("server_port", 47984)),
+            server_url=str(data.get("server_url", "")).strip(),
             timer_positions=timer_positions,
             overlay_opacity=int(data.get("overlay_opacity", 85)),
             timer_hotkeys=hotkeys,
@@ -152,6 +154,7 @@ class AppConfig:
         return {
             "server_host": self.server_host,
             "server_port": self.server_port,
+            "server_url": self.server_url,
             "channel_code": self.channel_code,
             "timer_positions": {key: list(value) for key, value in self.timer_positions.items()},
             "overlay_opacity": int(self.overlay_opacity),

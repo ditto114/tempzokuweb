@@ -43,12 +43,18 @@ class ServerSettingsDialog(QDialog):
     def __init__(self, parent: QWidget | None, config: AppConfig):
         super().__init__(parent)
         self.setWindowTitle("서버 설정")
+        
+        self.url_edit = QLineEdit(config.server_url)
+        self.url_edit.setPlaceholderText("예: https://your-app.vercel.app")
+        
         self.host_edit = QLineEdit(config.server_host)
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(config.server_port)
 
         form = QFormLayout()
+        form.addRow("서버 URL (Vercel)", self.url_edit)
+        form.addRow(QLabel("--- 또는 ---"))
         form.addRow("호스트", self.host_edit)
         form.addRow("포트", self.port_spin)
 
@@ -64,6 +70,7 @@ class ServerSettingsDialog(QDialog):
     def apply(self, config: AppConfig) -> bool:
         if self.exec_() != QDialog.Accepted:
             return False
+        config.server_url = self.url_edit.text().strip()
         config.server_host = self.host_edit.text().strip() or "218.234.230.188"
         config.server_port = self.port_spin.value()
         return True
@@ -239,7 +246,7 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        settings = ServerSettings(self.config.server_host, self.config.server_port)
+        settings = ServerSettings(host=self.config.server_host, port=self.config.server_port, url=self.config.server_url)
         self.timer_service = TimerService(settings)
         self.timer_service.timers_updated.connect(self._handle_timers_payload)
         self.timer_service.connection_state_changed.connect(self._handle_connection_state)
@@ -274,7 +281,7 @@ class MainWindow(QMainWindow):
         self._apply_server_settings(initial=True, force_prompt=False)
 
     def _apply_server_settings(self, *, initial: bool, force_prompt: bool) -> None:
-        settings = ServerSettings(self.config.server_host, self.config.server_port)
+        settings = ServerSettings(host=self.config.server_host, port=self.config.server_port, url=self.config.server_url)
         target_settings = settings if self._test_connection(settings) else self._handle_connection_failure(initial)
         if target_settings is None:
             return
@@ -363,7 +370,7 @@ class MainWindow(QMainWindow):
                 self.close()
             return None
 
-        fallback = ServerSettings("localhost", 47984)
+        fallback = ServerSettings(host="localhost", port=47984)
         if self._test_connection(fallback):
             self.config.server_host = fallback.host
             self.config.server_port = fallback.port
