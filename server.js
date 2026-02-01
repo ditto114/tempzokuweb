@@ -1136,12 +1136,14 @@ app.post('/api/timers/:id/start', requireChannel, async (req, res) => {
     return res.status(404).json({ message: '해당 타이머를 찾을 수 없습니다.' });
   }
 
-  if (timer.isRunning) {
-    return res.json(createTimerPayload(timer));
-  }
-
   const { duration } = req.body ?? {};
   const now = Date.now();
+
+  // 반복 타이머가 만료된 경우가 아니면 이미 실행 중인 타이머는 그대로 반환
+  let remaining = getTimerRemaining(timer, now);
+  if (timer.isRunning && !(timer.repeatEnabled && remaining <= 0)) {
+    return res.json(createTimerPayload(timer));
+  }
 
   if (Number.isFinite(duration) && duration > 0) {
     const safeDuration = clampTimerDuration(duration);
@@ -1149,7 +1151,7 @@ app.post('/api/timers/:id/start', requireChannel, async (req, res) => {
     timer.remainingMs = safeDuration;
   }
 
-  const remaining = getTimerRemaining(timer, now) || timer.durationMs;
+  remaining = getTimerRemaining(timer, now) || timer.durationMs;
   timer.remainingMs = remaining <= 0 ? timer.durationMs : remaining;
   timer.isRunning = true;
   timer.endTime = now + timer.remainingMs;
