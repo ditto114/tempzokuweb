@@ -58,6 +58,7 @@ const channelName = resolveChannelName(channelCode);
 const timers = new Map();
 const timerDisplays = new Map();
 const timerProgressBars = new Map();
+const restartingTimers = new Set(); // 반복 타이머 재시작 중복 호출 방지
 
 const SHORTCUT_COOKIE_NAME = 'timer_shortcuts';
 const SHORTCUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
@@ -1703,11 +1704,19 @@ function updateTimerDisplays() {
     // 클라이언트 측 타이머 만료 처리: 진행 중인데 남은 시간이 0이면 상태 갱신
     if (timer.isRunning && remaining === 0) {
       if (timer.repeatEnabled) {
-        // 반복 활성화: 타이머 재시작
-        timer.remainingMs = timer.durationMs;
-        timer.endTime = getEffectiveNow(now) + timer.durationMs;
-        // 서버에 재시작 요청 (배경에서 처리)
-        startTimer(timer.id).catch(() => { });
+        // 반복 활성화: 중복 호출 방지하면서 타이머 재시작
+        if (!restartingTimers.has(timer.id)) {
+          restartingTimers.add(timer.id);
+          // 서버에 재시작 요청 (배경에서 처리)
+          startTimer(timer.id)
+            .catch(() => { })
+            .finally(() => {
+              // 3초 후 재시작 플래그 제거 (다음 사이클에서 재시도 가능)
+              setTimeout(() => {
+                restartingTimers.delete(timer.id);
+              }, 3000);
+            });
+        }
       } else {
         timer.isRunning = false;
         timer.remainingMs = 0;
