@@ -21,7 +21,8 @@ const pool = new Pool({
 
 const SESSION_COOKIE_NAME = 'sessionToken';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
-const sessions = new Map();
+// DB 쓰기 스로틀: 마지막 갱신 이후 이 시간이 지났을 때만 DB UPDATE 수행
+const SESSION_REFRESH_THROTTLE_MS = 5 * 60 * 1000;
 
 const DEFAULT_TIMER_DURATION_MS = 15 * 60 * 1000;
 const MIN_TIMER_DURATION_MS = 5 * 1000;
@@ -148,45 +149,99 @@ function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
 }
 
-function getSessionInfo(req) {
+async function getSessionInfo(req) {
   const cookies = parseCookies(req);
   const token = cookies[SESSION_COOKIE_NAME];
   if (!token) {
     return null;
   }
-  const session = sessions.get(token);
-  if (!session) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT token, username, expires_at, last_seen_at FROM sessions WHERE token = $1 LIMIT 1',
+      [token],
+    );
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+    const row = rows[0];
+    const expiresAt = Number(row.expires_at);
+    const lastSeenAt = Number(row.last_seen_at);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      // lazy deletion
+      pool
+        .query('DELETE FROM sessions WHERE token = $1', [token])
+        .catch((error) => console.error('Failed to delete expired session:', error));
+      return null;
+    }
+    return {
+      token,
+      session: {
+        username: row.username,
+        expiresAt,
+        lastSeenAt: Number.isFinite(lastSeenAt) ? lastSeenAt : 0,
+      },
+    };
+  } catch (error) {
+    console.error('Error loading session:', error);
     return null;
   }
-  if (session.expiresAt <= Date.now()) {
-    sessions.delete(token);
-    return null;
-  }
-  return { token, session };
 }
 
-function refreshSession(res, token, session) {
-  session.expiresAt = Date.now() + SESSION_DURATION_MS;
-  sessions.set(token, session);
+async function refreshSession(res, token, session) {
+  const now = Date.now();
+  const nextExpiresAt = now + SESSION_DURATION_MS;
+  const shouldWrite =
+    !Number.isFinite(session.lastSeenAt) ||
+    now - session.lastSeenAt >= SESSION_REFRESH_THROTTLE_MS;
+
+  if (shouldWrite) {
+    try {
+      await pool.query(
+        'UPDATE sessions SET expires_at = $1, last_seen_at = $2 WHERE token = $3',
+        [nextExpiresAt, now, token],
+      );
+      session.expiresAt = nextExpiresAt;
+      session.lastSeenAt = now;
+    } catch (error) {
+      console.error('Failed to refresh session:', error);
+      // 쓰기 실패해도 쿠키는 갱신해 UX 단절 방지
+    }
+  }
+
   setSessionCookie(res, token, session.expiresAt);
 }
 
-function createSession(username) {
+async function createSession(username) {
   const token = crypto.randomBytes(32).toString('hex');
-  const session = {
-    username,
-    expiresAt: Date.now() + SESSION_DURATION_MS,
+  const now = Date.now();
+  const expiresAt = now + SESSION_DURATION_MS;
+  await pool.query(
+    'INSERT INTO sessions (token, username, expires_at, last_seen_at) VALUES ($1, $2, $3, $4)',
+    [token, username, expiresAt, now],
+  );
+  return {
+    token,
+    session: { username, expiresAt, lastSeenAt: now },
   };
-  sessions.set(token, session);
-  return { token, session };
 }
 
-function requireApiAuth(req, res, next) {
-  const sessionInfo = getSessionInfo(req);
+async function destroySession(token) {
+  if (!token) {
+    return;
+  }
+  try {
+    await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
+  } catch (error) {
+    console.error('Failed to destroy session:', error);
+  }
+}
+
+async function requireApiAuth(req, res, next) {
+  const sessionInfo = await getSessionInfo(req);
   if (!sessionInfo) {
     return res.status(401).json({ message: '로그인이 필요합니다.' });
   }
-  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  await refreshSession(res, sessionInfo.token, sessionInfo.session);
   req.session = { username: sessionInfo.session.username };
   return next();
 }
@@ -545,6 +600,16 @@ async function initializeDatabase() {
     throw error;
   }
 
+  // sessions 테이블 존재 확인 (setup-sessions.sql 미실행 시 경고)
+  try {
+    await pool.query('SELECT 1 FROM sessions LIMIT 1');
+  } catch (error) {
+    console.error(
+      '⚠️  sessions 테이블 조회 실패 — Supabase에서 setup-sessions.sql 을 먼저 실행하세요:',
+      error.message,
+    );
+  }
+
   // 기본 admin 계정 확인 및 생성
   const { rows: existingAdminRows } = await pool.query(
     'SELECT id FROM admins WHERE username = $1 LIMIT 1',
@@ -574,13 +639,13 @@ app.get(['/login', '/login.html'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get(['/distribution', '/distribution.html'], (req, res) => {
-  const sessionInfo = getSessionInfo(req);
+app.get(['/distribution', '/distribution.html'], async (req, res) => {
+  const sessionInfo = await getSessionInfo(req);
   if (!sessionInfo) {
     const redirectTarget = encodeURIComponent(req.originalUrl || '/distribution.html');
     return res.redirect(`${LOGIN_PAGE_PATH}?redirect=${redirectTarget}`);
   }
-  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  await refreshSession(res, sessionInfo.token, sessionInfo.session);
   return res.sendFile(path.join(__dirname, 'public', 'distribution.html'));
 });
 
@@ -610,7 +675,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: '아이디 또는 비밀번호가 올바르지 않습니다.' });
     }
 
-    const { token, session } = createSession(admin.username);
+    const { token, session } = await createSession(admin.username);
     setSessionCookie(res, token, session.expiresAt);
     return res.json({ authenticated: true, username: admin.username });
   } catch (error) {
@@ -619,21 +684,21 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/logout', (req, res) => {
-  const sessionInfo = getSessionInfo(req);
+app.post('/api/logout', async (req, res) => {
+  const sessionInfo = await getSessionInfo(req);
   if (sessionInfo) {
-    sessions.delete(sessionInfo.token);
+    await destroySession(sessionInfo.token);
   }
   clearSessionCookie(res);
   res.status(204).send();
 });
 
-app.get('/api/session', (req, res) => {
-  const sessionInfo = getSessionInfo(req);
+app.get('/api/session', async (req, res) => {
+  const sessionInfo = await getSessionInfo(req);
   if (!sessionInfo) {
     return res.status(401).json({ authenticated: false });
   }
-  refreshSession(res, sessionInfo.token, sessionInfo.session);
+  await refreshSession(res, sessionInfo.token, sessionInfo.session);
   return res.json({ authenticated: true, username: sessionInfo.session.username });
 });
 

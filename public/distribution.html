@@ -37,6 +37,17 @@
     </header>
 
     <main>
+      <div id="draft-recovery-banner" class="draft-banner hidden" role="status" aria-live="polite">
+        <div class="draft-banner-message">
+          <strong>작성 중이던 분배표가 있습니다.</strong>
+          <span id="draft-recovery-detail"></span>
+        </div>
+        <div class="draft-banner-actions">
+          <button type="button" id="draft-recover-btn" class="primary">복구</button>
+          <button type="button" id="draft-discard-btn" class="secondary">버리기</button>
+        </div>
+      </div>
+
       <section id="list-page" class="card">
         <div class="card-header">
           <h2>목록</h2>

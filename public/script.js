@@ -36,6 +36,88 @@ let paymentModalMemberIndex = null;
 
 const LOGIN_PAGE_PATH = '/login.html';
 
+const DRAFT_STORAGE_PREFIX = 'distribution-draft:';
+const DRAFT_AUTOSAVE_DELAY_MS = 1500;
+let draftSaveTimer = null;
+let draftSaveEnabled = false;
+
+function getDraftKey(id = currentDistributionId) {
+  const suffix = id == null ? 'new' : String(id);
+  return `${DRAFT_STORAGE_PREFIX}${suffix}`;
+}
+
+function scheduleDraftSave() {
+  if (!draftSaveEnabled || isReadOnly) {
+    return;
+  }
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+  }
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    saveDraftNow();
+  }, DRAFT_AUTOSAVE_DELAY_MS);
+}
+
+function saveDraftNow() {
+  if (!draftSaveEnabled || isReadOnly) {
+    return;
+  }
+  if (typeof collectDistributionPayload !== 'function') {
+    return;
+  }
+  try {
+    const titleInput = document.getElementById('page-title-input');
+    const title =
+      (titleInput && typeof titleInput.value === 'string' ? titleInput.value.trim() : '') ||
+      currentTitle ||
+      '';
+    const payload = collectDistributionPayload();
+    const draft = {
+      savedAt: Date.now(),
+      id: currentDistributionId,
+      title,
+      payload,
+    };
+    localStorage.setItem(getDraftKey(), JSON.stringify(draft));
+  } catch (error) {
+    console.warn('임시저장에 실패했습니다.', error);
+  }
+}
+
+function clearDraft(id = currentDistributionId) {
+  try {
+    localStorage.removeItem(getDraftKey(id));
+  } catch (error) {
+    // ignore
+  }
+}
+
+function readAllDrafts() {
+  const drafts = [];
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(DRAFT_STORAGE_PREFIX)) {
+        continue;
+      }
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          drafts.push({ key, ...parsed });
+        }
+      } catch (parseError) {
+        // 손상된 항목은 무시
+      }
+    }
+  } catch (error) {
+    // ignore
+  }
+  return drafts;
+}
+
 function buildLoginRedirectPath() {
   const path = window.location.pathname || '/distribution.html';
   const search = window.location.search || '';
@@ -50,6 +132,12 @@ function redirectToLogin() {
 async function fetchWithAuth(url, options) {
   const response = await fetch(url, options);
   if (response.status === 401) {
+    // 세션 만료로 튕기기 직전, 작성 중이던 내용을 로컬에 보존
+    try {
+      saveDraftNow();
+    } catch (error) {
+      // ignore — 리다이렉트는 계속 진행
+    }
     redirectToLogin();
     throw new Error('UNAUTHORIZED');
   }
@@ -910,6 +998,7 @@ function updateTotals(distributionData = null) {
   }
 
   updateDistributionTable(total, calculated);
+  scheduleDraftSave();
 }
 
 function createRateControls(member, rateCell, rateValue) {
@@ -1695,6 +1784,13 @@ function updateEditModeButton() {
 
 function setReadOnly(readOnly) {
   isReadOnly = readOnly;
+  if (readOnly && draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  if (currentView === 'editor') {
+    draftSaveEnabled = !readOnly;
+  }
   applyReadOnlyState();
   applySaleTablesReadOnlyState();
   updateNavState();
@@ -1817,6 +1913,11 @@ function populateFromDistributionData(payload = {}) {
 
 function showListView() {
   currentView = 'list';
+  draftSaveEnabled = false;
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
   const listPage = document.getElementById('list-page');
   const editorPage = document.getElementById('editor-page');
   if (listPage) {
@@ -1842,6 +1943,8 @@ function showEditorView(readOnly = false) {
   }
   setReadOnly(readOnly);
   setPageTitle(currentTitle || generateDefaultTitle());
+  // 편집 모드일 때만 draft 자동 저장 활성화
+  draftSaveEnabled = !readOnly;
   updateTotals();
   updateEditModeButton();
 }
@@ -1949,6 +2052,8 @@ async function deleteDistribution(id) {
       currentDistributionId = null;
       currentTitle = '';
     }
+    // 삭제된 분배표의 draft도 함께 정리
+    clearDraft(id);
 
     await loadDistributionList();
     alert('분배표가 삭제되었습니다.');
@@ -2076,10 +2181,16 @@ async function handleSaveDistribution() {
     }
 
     const saved = await response.json();
+    const previousId = currentDistributionId;
     currentDistributionId = saved.id;
     currentTitle = saved.title;
     setPageTitle(currentTitle);
     titleInput.value = currentTitle;
+    // 저장에 성공했으므로 이 분배표에 대한 draft는 폐기
+    clearDraft(previousId);
+    if (previousId !== currentDistributionId) {
+      clearDraft(currentDistributionId);
+    }
     showSaveCompleteMessage();
     await loadDistributionList();
     updateNavState();
@@ -2282,6 +2393,115 @@ function initMemberControls() {
       closePaymentInputModal();
     });
   }
+
+  const recoverBtn = document.getElementById('draft-recover-btn');
+  if (recoverBtn) {
+    recoverBtn.addEventListener('click', () => {
+      handleDraftRecover();
+    });
+  }
+
+  const discardBtn = document.getElementById('draft-discard-btn');
+  if (discardBtn) {
+    discardBtn.addEventListener('click', () => {
+      handleDraftDiscard();
+    });
+  }
+}
+
+let pendingDraft = null;
+
+function formatDraftTimestamp(ts) {
+  if (!Number.isFinite(ts)) {
+    return '';
+  }
+  try {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch (error) {
+    return '';
+  }
+}
+
+function hideDraftBanner() {
+  const banner = document.getElementById('draft-recovery-banner');
+  if (banner) {
+    banner.classList.add('hidden');
+  }
+  pendingDraft = null;
+}
+
+function showDraftBannerForLatest() {
+  const drafts = readAllDrafts();
+  if (drafts.length === 0) {
+    hideDraftBanner();
+    return;
+  }
+  // 가장 최근 draft 하나만 우선 노출 (다수 있으면 복구 후 남은 항목은 다음 로드 시 다시 안내)
+  drafts.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  const latest = drafts[0];
+  pendingDraft = latest;
+
+  const banner = document.getElementById('draft-recovery-banner');
+  const detail = document.getElementById('draft-recovery-detail');
+  if (!banner) return;
+
+  if (detail) {
+    const title = latest.title && latest.title.trim() ? `"${latest.title}"` : '(제목 없음)';
+    const when = formatDraftTimestamp(latest.savedAt);
+    const scope = latest.id == null ? '신규 작성' : `ID ${latest.id}`;
+    detail.textContent = `${title} · ${scope}${when ? ` · 임시저장 ${when}` : ''}`;
+  }
+  banner.classList.remove('hidden');
+}
+
+function handleDraftRecover() {
+  if (!pendingDraft) {
+    hideDraftBanner();
+    return;
+  }
+  const { id, title, payload } = pendingDraft;
+  try {
+    currentDistributionId = id == null ? null : id;
+    currentTitle = title || generateDefaultTitle();
+    useBaseMembersForEditor = false;
+    setReadOnly(false);
+    populateFromDistributionData(payload || {});
+    showEditorView(false);
+    setPageTitle(currentTitle);
+    const titleInput = document.getElementById('page-title-input');
+    if (titleInput) {
+      titleInput.value = currentTitle;
+    }
+    updateNavState();
+  } catch (error) {
+    console.error('draft 복구 실패', error);
+    alert('임시저장 내용을 복구하는 중 문제가 발생했습니다.');
+    return;
+  }
+  hideDraftBanner();
+}
+
+function handleDraftDiscard() {
+  if (!pendingDraft) {
+    hideDraftBanner();
+    return;
+  }
+  try {
+    // 목록에 있던 모든 draft를 제거 (사용자가 의식적으로 버리겠다고 선택한 시점)
+    const drafts = readAllDrafts();
+    drafts.forEach((d) => {
+      try {
+        localStorage.removeItem(d.key);
+      } catch (e) {
+        // ignore
+      }
+    });
+  } catch (error) {
+    // ignore
+  }
+  hideDraftBanner();
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -2300,4 +2520,5 @@ window.addEventListener('DOMContentLoaded', async () => {
   updateTotals();
   setPageTitle(currentTitle);
   updateNavState();
+  showDraftBannerForLatest();
 });
