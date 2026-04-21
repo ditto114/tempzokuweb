@@ -1371,7 +1371,7 @@ button:disabled {
 .landing-layout {
   display: flex;
   flex-wrap: nowrap;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: center;
   gap: 32px;
   width: 100%;
