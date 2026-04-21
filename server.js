@@ -655,7 +655,26 @@ app.get(['/login', '/login.html'], (req, res) => {
 });
 
 app.get(['/distribution', '/distribution.html'], async (req, res) => {
+  const requestedGuild =
+    typeof req.query?.guild === 'string' ? req.query.guild.trim() : '';
   const sessionInfo = await getSessionInfo(req);
+
+  // 현재 세션 guild와 URL의 ?guild= 힌트가 다르면 → 자동으로 세션 파기 후 로그인 유도
+  // (힐링 세션이 살아있을 때 카스 카드를 눌러도 힐링 계정인 채로 들어가는 문제 방지)
+  if (
+    sessionInfo &&
+    requestedGuild &&
+    sessionInfo.session.guild &&
+    sessionInfo.session.guild !== requestedGuild
+  ) {
+    await destroySession(sessionInfo.token);
+    clearSessionCookie(res);
+    const redirectTarget = encodeURIComponent(
+      req.originalUrl || `/distribution.html?guild=${requestedGuild}`,
+    );
+    return res.redirect(`${LOGIN_PAGE_PATH}?redirect=${redirectTarget}`);
+  }
+
   if (!sessionInfo) {
     const redirectTarget = encodeURIComponent(req.originalUrl || '/distribution.html');
     return res.redirect(`${LOGIN_PAGE_PATH}?redirect=${redirectTarget}`);
@@ -693,7 +712,7 @@ app.post('/api/login', async (req, res) => {
     const adminGuild = admin.guild || admin.username;
     const { token, session } = await createSession(admin.username, adminGuild);
     setSessionCookie(res, token, session.expiresAt);
-    return res.json({ authenticated: true, username: admin.username });
+    return res.json({ authenticated: true, username: admin.username, guild: adminGuild });
   } catch (error) {
     console.error('Error during login:', error);
     return res.status(500).json({ message: '로그인 처리 중 오류가 발생했습니다.' });
@@ -715,7 +734,11 @@ app.get('/api/session', async (req, res) => {
     return res.status(401).json({ authenticated: false });
   }
   await refreshSession(res, sessionInfo.token, sessionInfo.session);
-  return res.json({ authenticated: true, username: sessionInfo.session.username });
+  return res.json({
+    authenticated: true,
+    username: sessionInfo.session.username,
+    guild: sessionInfo.session.guild || null,
+  });
 });
 
 app.get('/api/members', requireApiAuth, async (req, res) => {

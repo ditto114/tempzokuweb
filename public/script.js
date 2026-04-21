@@ -36,6 +36,29 @@ let paymentModalMemberIndex = null;
 
 const LOGIN_PAGE_PATH = '/login.html';
 
+const GUILD_LABELS = Object.freeze({
+  cass: '카스공대',
+  healing: '힐링공대',
+});
+const DEFAULT_GUILD_LABEL = '카스공대';
+let currentGuildLabel = DEFAULT_GUILD_LABEL;
+
+function resolveGuildLabel(guild) {
+  if (typeof guild === 'string' && GUILD_LABELS[guild]) {
+    return GUILD_LABELS[guild];
+  }
+  return DEFAULT_GUILD_LABEL;
+}
+
+function applyGuildLabel(guild) {
+  currentGuildLabel = resolveGuildLabel(guild);
+  try {
+    document.title = `${currentGuildLabel} 분배표`;
+  } catch (error) {
+    // ignore
+  }
+}
+
 const DRAFT_STORAGE_PREFIX = 'distribution-draft:';
 const DRAFT_AUTOSAVE_DELAY_MS = 1500;
 let draftSaveTimer = null;
@@ -156,6 +179,7 @@ async function ensureAuthenticated() {
       redirectToLogin();
       return false;
     }
+    applyGuildLabel(data.guild);
     return true;
   } catch (error) {
     redirectToLogin();
@@ -394,7 +418,7 @@ function generateDefaultTitle() {
   const day = String(now.getDate()).padStart(2, '0');
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
   const dayName = dayNames[now.getDay()];
-  return `${year}-${month}-${day}(${dayName}) 카스공대 혼테일 분배표`;
+  return `${year}-${month}-${day}(${dayName}) ${currentGuildLabel} 혼테일 분배표`;
 }
 
 function formatDateTime(value) {
@@ -416,7 +440,7 @@ function setPageTitle(title) {
   const titleElement = document.getElementById('page-title');
   const titleInput = document.getElementById('page-title-input');
 
-  const displayTitle = (currentView === 'list') ? '카스공대 혼테일 분배표' : (title || generateDefaultTitle());
+  const displayTitle = (currentView === 'list') ? `${currentGuildLabel} 혼테일 분배표` : (title || generateDefaultTitle());
 
   if (titleElement) {
     titleElement.textContent = displayTitle;
