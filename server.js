@@ -157,7 +157,7 @@ async function getSessionInfo(req) {
   }
   try {
     const { rows } = await pool.query(
-      'SELECT token, username, expires_at, last_seen_at FROM sessions WHERE token = $1 LIMIT 1',
+      'SELECT token, username, guild, expires_at, last_seen_at FROM sessions WHERE token = $1 LIMIT 1',
       [token],
     );
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -177,6 +177,7 @@ async function getSessionInfo(req) {
       token,
       session: {
         username: row.username,
+        guild: row.guild || null,
         expiresAt,
         lastSeenAt: Number.isFinite(lastSeenAt) ? lastSeenAt : 0,
       },
@@ -211,17 +212,17 @@ async function refreshSession(res, token, session) {
   setSessionCookie(res, token, session.expiresAt);
 }
 
-async function createSession(username) {
+async function createSession(username, guild) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = now + SESSION_DURATION_MS;
   await pool.query(
-    'INSERT INTO sessions (token, username, expires_at, last_seen_at) VALUES ($1, $2, $3, $4)',
-    [token, username, expiresAt, now],
+    'INSERT INTO sessions (token, username, guild, expires_at, last_seen_at) VALUES ($1, $2, $3, $4, $5)',
+    [token, username, guild || null, expiresAt, now],
   );
   return {
     token,
-    session: { username, expiresAt, lastSeenAt: now },
+    session: { username, guild: guild || null, expiresAt, lastSeenAt: now },
   };
 }
 
@@ -241,8 +242,17 @@ async function requireApiAuth(req, res, next) {
   if (!sessionInfo) {
     return res.status(401).json({ message: '로그인이 필요합니다.' });
   }
+  if (!sessionInfo.session.guild) {
+    // guild 없는 구형 세션은 무효화해 강제 재로그인
+    await destroySession(sessionInfo.token);
+    clearSessionCookie(res);
+    return res.status(401).json({ message: '로그인이 필요합니다.' });
+  }
   await refreshSession(res, sessionInfo.token, sessionInfo.session);
-  req.session = { username: sessionInfo.session.username };
+  req.session = {
+    username: sessionInfo.session.username,
+    guild: sessionInfo.session.guild,
+  };
   return next();
 }
 
@@ -610,18 +620,23 @@ async function initializeDatabase() {
     );
   }
 
-  // 기본 admin 계정 확인 및 생성
-  const { rows: existingAdminRows } = await pool.query(
-    'SELECT id FROM admins WHERE username = $1 LIMIT 1',
-    ['cass'],
-  );
-  if (!Array.isArray(existingAdminRows) || existingAdminRows.length === 0) {
-    const passwordHash = hashPassword('9799');
-    await pool.query(
-      'INSERT INTO admins (username, password_hash) VALUES ($1, $2)',
-      ['cass', passwordHash],
+  // 기본 admin 계정 시드 (이미 존재하면 비밀번호는 절대 덮어쓰지 않음 — 변경은 마이그레이션 SQL로만)
+  const defaultAdmins = [
+    { username: 'cass', password: '1121', guild: 'cass' },
+    { username: 'healing', password: '9799', guild: 'healing' },
+  ];
+  for (const account of defaultAdmins) {
+    const { rows: existingRows } = await pool.query(
+      'SELECT id FROM admins WHERE username = $1 LIMIT 1',
+      [account.username],
     );
-    console.log('✅ 기본 admin 계정 생성 완료');
+    if (!Array.isArray(existingRows) || existingRows.length === 0) {
+      await pool.query(
+        'INSERT INTO admins (username, password_hash, guild) VALUES ($1, $2, $3)',
+        [account.username, hashPassword(account.password), account.guild],
+      );
+      console.log(`✅ 기본 admin 계정 생성 완료: ${account.username} (guild=${account.guild})`);
+    }
   }
 
   await loadGridSettingsFromDatabase();
@@ -660,7 +675,7 @@ app.post('/api/login', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, password_hash FROM admins WHERE username = $1 LIMIT 1',
+      'SELECT id, username, password_hash, guild FROM admins WHERE username = $1 LIMIT 1',
       [username],
     );
 
@@ -675,7 +690,8 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: '아이디 또는 비밀번호가 올바르지 않습니다.' });
     }
 
-    const { token, session } = await createSession(admin.username);
+    const adminGuild = admin.guild || admin.username;
+    const { token, session } = await createSession(admin.username, adminGuild);
     setSessionCookie(res, token, session.expiresAt);
     return res.json({ authenticated: true, username: admin.username });
   } catch (error) {
@@ -704,10 +720,15 @@ app.get('/api/session', async (req, res) => {
 
 app.get('/api/members', requireApiAuth, async (req, res) => {
   try {
+    const { guild } = req.session;
     const { rows } = await pool.query(
-      'SELECT id, nickname, job, included, display_order, leger_order FROM members ORDER BY display_order ASC, id ASC',
+      'SELECT id, nickname, job, included, display_order, leger_order FROM members WHERE guild = $1 ORDER BY display_order ASC, id ASC',
+      [guild],
     );
-    const { rows: distributionRows } = await pool.query('SELECT data FROM distributions');
+    const { rows: distributionRows } = await pool.query(
+      'SELECT data FROM distributions WHERE guild = $1',
+      [guild],
+    );
 
     const outstandingMap = new Map();
     const nicknameMap = new Map();
@@ -804,13 +825,15 @@ app.post('/api/members', requireApiAuth, async (req, res) => {
   }
 
   try {
+    const { guild } = req.session;
     const { rows: maxRows } = await pool.query(
-      'SELECT COALESCE(MAX(display_order), 0) AS "maxOrder" FROM members',
+      'SELECT COALESCE(MAX(display_order), 0) AS "maxOrder" FROM members WHERE guild = $1',
+      [guild],
     );
     const displayOrder = Number(maxRows[0]?.maxOrder ?? 0) + 1;
     const result = await pool.query(
-      'INSERT INTO members (nickname, job, display_order, leger_order) VALUES ($1, $2, $3, $4) RETURNING id',
-      [nickname, job, displayOrder, 0],
+      'INSERT INTO members (nickname, job, display_order, leger_order, guild) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [nickname, job, displayOrder, 0, guild],
     );
     res
       .status(201)
@@ -859,9 +882,10 @@ app.patch('/api/members/:id', requireApiAuth, async (req, res) => {
   }
 
   try {
+    const { guild } = req.session;
     const result = await pool.query(
-      `UPDATE members SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
-      [...updateValues, id],
+      `UPDATE members SET ${updateFields.join(', ')} WHERE id = $${paramIndex} AND guild = $${paramIndex + 1}`,
+      [...updateValues, id, guild],
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
@@ -879,16 +903,17 @@ app.post('/api/members/reorder', requireApiAuth, async (req, res) => {
     return res.status(400).json({ message: '올바른 공대원 정보를 전달해주세요.' });
   }
 
+  const { guild } = req.session;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: sourceRows } = await client.query(
-      'SELECT display_order FROM members WHERE id = $1 LIMIT 1',
-      [sourceId],
+      'SELECT display_order FROM members WHERE id = $1 AND guild = $2 LIMIT 1',
+      [sourceId, guild],
     );
     const { rows: targetRows } = await client.query(
-      'SELECT display_order FROM members WHERE id = $1 LIMIT 1',
-      [targetId],
+      'SELECT display_order FROM members WHERE id = $1 AND guild = $2 LIMIT 1',
+      [targetId, guild],
     );
 
     if (!sourceRows[0] || !targetRows[0]) {
@@ -899,8 +924,14 @@ app.post('/api/members/reorder', requireApiAuth, async (req, res) => {
     const source = sourceRows[0];
     const target = targetRows[0];
 
-    await client.query('UPDATE members SET display_order = $1 WHERE id = $2', [target.display_order, sourceId]);
-    await client.query('UPDATE members SET display_order = $1 WHERE id = $2', [source.display_order, targetId]);
+    await client.query(
+      'UPDATE members SET display_order = $1 WHERE id = $2 AND guild = $3',
+      [target.display_order, sourceId, guild],
+    );
+    await client.query(
+      'UPDATE members SET display_order = $1 WHERE id = $2 AND guild = $3',
+      [source.display_order, targetId, guild],
+    );
 
     await client.query('COMMIT');
     return res.json({
@@ -922,7 +953,11 @@ app.delete('/api/members/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = await pool.query('DELETE FROM members WHERE id = $1', [id]);
+    const { guild } = req.session;
+    const result = await pool.query(
+      'DELETE FROM members WHERE id = $1 AND guild = $2',
+      [id, guild],
+    );
     if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 공대원을 찾을 수 없습니다.' });
     }
@@ -978,8 +1013,10 @@ function summarizeDistributionMembers(payload = {}) {
 
 app.get('/api/distributions', requireApiAuth, async (req, res) => {
   try {
+    const { guild } = req.session;
     const { rows } = await pool.query(
-      'SELECT id, title, data, created_at, updated_at FROM distributions ORDER BY created_at DESC, id DESC',
+      'SELECT id, title, data, created_at, updated_at FROM distributions WHERE guild = $1 ORDER BY created_at DESC, id DESC',
+      [guild],
     );
     const enhanced = rows.map((row) => {
       const payload = normalizeDistributionData(row.data);
@@ -1005,7 +1042,11 @@ app.get('/api/distributions', requireApiAuth, async (req, res) => {
 app.get('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
   try {
-    const { rows } = await pool.query('SELECT id, title, data, created_at, updated_at FROM distributions WHERE id = $1', [id]);
+    const { guild } = req.session;
+    const { rows } = await pool.query(
+      'SELECT id, title, data, created_at, updated_at FROM distributions WHERE id = $1 AND guild = $2',
+      [id, guild],
+    );
     if (rows.length === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
@@ -1032,8 +1073,15 @@ app.post('/api/distributions', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query('INSERT INTO distributions (title, data) VALUES ($1, $2) RETURNING id', [title, JSON.stringify(data)]);
-    const { rows } = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1', [result.rows[0].id]);
+    const { guild } = req.session;
+    const result = await pool.query(
+      'INSERT INTO distributions (title, data, guild) VALUES ($1, $2, $3) RETURNING id',
+      [title, JSON.stringify(data), guild],
+    );
+    const { rows } = await pool.query(
+      'SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1 AND guild = $2',
+      [result.rows[0].id, guild],
+    );
     res.status(201).json(rows[0]);
   } catch (error) {
     console.error('Error saving distribution:', error);
@@ -1050,11 +1098,18 @@ app.put('/api/distributions/:id', requireApiAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query('UPDATE distributions SET title = $1, data = $2 WHERE id = $3', [title, JSON.stringify(data), id]);
+    const { guild } = req.session;
+    const result = await pool.query(
+      'UPDATE distributions SET title = $1, data = $2 WHERE id = $3 AND guild = $4',
+      [title, JSON.stringify(data), id, guild],
+    );
     if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }
-    const { rows } = await pool.query('SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1', [id]);
+    const { rows } = await pool.query(
+      'SELECT id, title, created_at, updated_at FROM distributions WHERE id = $1 AND guild = $2',
+      [id, guild],
+    );
     res.json(rows[0]);
   } catch (error) {
     console.error('Error updating distribution:', error);
@@ -1066,7 +1121,11 @@ app.delete('/api/distributions/:id', requireApiAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const result = await pool.query('DELETE FROM distributions WHERE id = $1', [id]);
+    const { guild } = req.session;
+    const result = await pool.query(
+      'DELETE FROM distributions WHERE id = $1 AND guild = $2',
+      [id, guild],
+    );
     if (result.rowCount === 0) {
       return res.status(404).json({ message: '해당 분배표를 찾을 수 없습니다.' });
     }

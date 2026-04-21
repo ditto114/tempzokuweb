@@ -1364,11 +1364,21 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 40px 20px;
   background: linear-gradient(135deg, #f0f4ff 0%, #fdf2f8 100%);
 }
 
+.landing-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 32px;
+  width: 100%;
+}
+
 .landing-container {
-  width: min(480px, 90vw);
+  width: min(420px, 90vw);
   background-color: rgba(255, 255, 255, 0.9);
   border-radius: 20px;
   padding: 48px 32px;
@@ -1425,6 +1435,23 @@ button:disabled {
   box-shadow: 0 12px 30px rgba(26, 188, 156, 0.4);
 }
 
+.landing-link:disabled,
+.landing-link[aria-disabled="true"] {
+  background-color: #9ca3af;
+  color: #f3f4f6;
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.landing-link:disabled:hover,
+.landing-link:disabled:focus,
+.landing-link[aria-disabled="true"]:hover,
+.landing-link[aria-disabled="true"]:focus {
+  transform: none;
+  box-shadow: none;
+}
+
 .auth-body {
   min-height: 100vh;
   margin: 0;
@@ -1472,6 +1499,12 @@ button:disabled {
   border-radius: 10px;
   border: 1px solid var(--border);
   font-size: 1rem;
+}
+
+.auth-form-field input.prefilled {
+  background-color: #f1f5f9;
+  color: #475569;
+  cursor: not-allowed;
 }
 
 .auth-submit {

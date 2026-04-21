@@ -7,12 +7,21 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="landing-body">
-  <main class="landing-container">
-    <h1 class="landing-title">카스공대</h1>
-    <div class="landing-actions">
-      <a href="/distribution.html" class="landing-link">혼테일 분배표</a>
-      <button type="button" id="open-timer-channel" class="landing-link timer-link">혼테일 타이머</button>
-    </div>
+  <main class="landing-layout">
+    <section class="landing-container">
+      <h1 class="landing-title">카스공대</h1>
+      <div class="landing-actions">
+        <a href="/distribution.html?guild=cass" class="landing-link">혼테일 분배표</a>
+        <button type="button" id="open-timer-channel" class="landing-link timer-link" disabled aria-disabled="true" title="일시적으로 사용할 수 없습니다">혼테일 타이머</button>
+      </div>
+    </section>
+
+    <section class="landing-container">
+      <h1 class="landing-title">힐링공대</h1>
+      <div class="landing-actions">
+        <a href="/distribution.html?guild=healing" class="landing-link">혼테일 분배표</a>
+      </div>
+    </section>
   </main>
 
   <div class="modal-backdrop hidden" id="channel-modal-backdrop"></div>

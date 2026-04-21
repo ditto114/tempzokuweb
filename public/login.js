@@ -7,6 +7,49 @@ function getRedirectTarget() {
   return '/distribution.html';
 }
 
+const GUILD_TO_USERNAME = Object.freeze({
+  cass: 'cass',
+  healing: 'healing',
+});
+
+function detectGuildHint() {
+  const params = new URLSearchParams(window.location.search);
+  const directGuild = params.get('guild');
+  if (directGuild && GUILD_TO_USERNAME[directGuild]) {
+    return directGuild;
+  }
+  // 서버가 /login.html?redirect=/distribution.html?guild=xxx 로 돌려보낸 경우 대비
+  const redirect = params.get('redirect');
+  if (redirect) {
+    const queryStart = redirect.indexOf('?');
+    if (queryStart !== -1) {
+      const nested = new URLSearchParams(redirect.slice(queryStart + 1));
+      const nestedGuild = nested.get('guild');
+      if (nestedGuild && GUILD_TO_USERNAME[nestedGuild]) {
+        return nestedGuild;
+      }
+    }
+  }
+  return null;
+}
+
+function prefillFromGuildHint() {
+  const guild = detectGuildHint();
+  if (!guild) {
+    return;
+  }
+  const usernameInput = document.getElementById('username');
+  const passwordInput = document.getElementById('password');
+  if (usernameInput && !usernameInput.value) {
+    usernameInput.value = GUILD_TO_USERNAME[guild];
+    usernameInput.readOnly = true;
+    usernameInput.classList.add('prefilled');
+  }
+  if (passwordInput) {
+    passwordInput.focus();
+  }
+}
+
 function showError(message) {
   const errorElement = document.getElementById('login-error');
   if (errorElement) {
@@ -83,6 +126,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (alreadyLoggedIn) {
     return;
   }
+
+  prefillFromGuildHint();
 
   const form = document.getElementById('login-form');
   if (form) {

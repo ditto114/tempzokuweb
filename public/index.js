@@ -182,6 +182,10 @@ async function handleRegisterSubmit(event) {
 function attachChannelModalEvents() {
   if (openButton) {
     openButton.addEventListener('click', () => {
+      // 임시적으로 비활성화된 상태(HTML disabled 속성)에서는 아무 동작도 하지 않음
+      if (openButton.disabled || openButton.getAttribute('aria-disabled') === 'true') {
+        return;
+      }
       renderChannelList();
       showChannelModal();
     });
