@@ -1370,15 +1370,18 @@ button:disabled {
 
 .landing-layout {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: stretch;
   justify-content: center;
   gap: 32px;
   width: 100%;
+  max-width: 900px;
 }
 
 .landing-container {
-  width: min(420px, 90vw);
+  flex: 1;
+  max-width: 420px;
+  min-width: 0;
   background-color: rgba(255, 255, 255, 0.9);
   border-radius: 20px;
   padding: 48px 32px;
@@ -1539,6 +1542,10 @@ button:disabled {
 }
 
 @media (max-width: 600px) {
+  .landing-layout {
+    gap: 16px;
+  }
+
   .landing-container {
     padding: 32px 20px;
     gap: 24px;
